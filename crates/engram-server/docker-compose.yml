@@ -1,0 +1,21 @@
+services:
+  engram:
+    build:
+      context: ../..
+      dockerfile: crates/engram-server/Dockerfile
+    image: engram-server:0.1
+    container_name: engram-server
+    ports:
+      - "8787:8787"
+    environment:
+      ENGRAM_SERVER_TOKEN: ${ENGRAM_SERVER_TOKEN:-change-me}
+      ENGRAM_COLLECTION: /data/collection.egdb
+      ENGRAM_SERVER_LISTEN: 0.0.0.0:8787
+      ENGRAM_SERVER_STATIC: /app/dist
+      RUST_LOG: info
+    volumes:
+      - engram-data:/data
+    restart: unless-stopped
+
+volumes:
+  engram-data:

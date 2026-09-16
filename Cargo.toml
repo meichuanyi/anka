@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/engram-core",
+    "crates/engram-apkg",
+    "crates/engram-cli",
+    "crates/engram-mcp",
+    "crates/engram-serve",
+    "crates/engram-sync",
+    "crates/engram-server",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/engram-app/engram"
+rust-version = "1.80"
+
+[workspace.dependencies]
+engram-core = { path = "crates/engram-core" }
+engram-apkg = { path = "crates/engram-apkg" }
+engram-mcp = { path = "crates/engram-mcp" }
+engram-serve = { path = "crates/engram-serve" }
+engram-sync = { path = "crates/engram-sync" }
+engram-server = { path = "crates/engram-server" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+base64 = "0.22"
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
+fsrs = "6.6.2"
+clap = { version = "4", features = ["derive", "env"] }
+zip = "2"
+tempfile = "3"
+zstd = "0.13"
+directories = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
