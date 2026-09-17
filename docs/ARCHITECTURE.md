@@ -1,6 +1,6 @@
-# Engram Architecture
+# Anka Architecture
 
-Engram is a modern, AI-native spaced repetition system. It is **compatible with Anki data** (`.apkg` import/export) and **FSRS scheduling**, but is not a fork: no PyQt, no AnkiWeb hard dependency, no plugin ABI.
+Anka is a modern, AI-native spaced repetition system. It is **compatible with Anki data** (`.apkg` import/export) and **FSRS scheduling**, but is not a fork: no PyQt, no AnkiWeb hard dependency, no plugin ABI.
 
 ## Product thesis
 
@@ -12,12 +12,12 @@ Engram is a modern, AI-native spaced repetition system. It is **compatible with 
 
 ```text
                     ┌──────────────────────────────────────┐
-                    │  engram-server (Docker / VPS / NAS)   │
+                    │  anka-server (Docker / VPS / NAS)   │
                     │  /api/*   review & edit               │
                     │  /mcp     remote MCP (JSON-RPC HTTP)  │
                     │  /media   audio                       │
                     │  /        web UI                      │
-                    │  data: collection.egdb + media/       │
+                    │  data: collection.akdb + media/       │
                     └──────────────────▲───────────────────┘
                                        │ HTTPS + Bearer token
           ┌────────────────────────────┼────────────────────────────┐
@@ -28,7 +28,7 @@ Engram is a modern, AI-native spaced repetition system. It is **compatible with 
 
 - **Single-user self-host**: one collection + one token.
 - **MCP is server-side**; clients use HTTP or a stdio→HTTP bridge.
-- Local multi-master `engram-sync` is optional backup, not the primary story.
+- Local multi-master `anka-sync` is optional backup, not the primary story.
 
 ## Historical: multi-local + sync log (still available)
 
@@ -45,7 +45,7 @@ Engram is a modern, AI-native spaced repetition system. It is **compatible with 
 │  eng ram-apkg (.apkg import/export)                              │
 ├──────────────────────────────────────────────────────────────────┤
 │  Storage                                                         │
-│  SQLite collection.egdb  +  media/                               │
+│  SQLite collection.akdb  +  media/                               │
 ├──────────────────────────────────────────────────────────────────┤
 │  Optional self-host sync                                         │
 │  eng ram-sync (append-only log)  ← Docker / compose              │
@@ -59,19 +59,19 @@ Engram is a modern, AI-native spaced repetition system. It is **compatible with 
 
 - Core never calls UI or MCP.
 - UI / MCP / CLI only go through core APIs (library or local HTTP).
-- Anki formats are an **edge adapter** (`engram-apkg`), not the internal schema.
-- Sync is optional; one machine can share one `collection.egdb` without a server.
+- Anki formats are an **edge adapter** (`anka-apkg`), not the internal schema.
+- Sync is optional; one machine can share one `collection.akdb` without a server.
 
 ## Workspace layout
 
 ```text
-engram/
+anka/
   Cargo.toml              # workspace
   crates/
-    engram-core/          # domain + SQLite + FSRS
-    engram-apkg/          # .apkg / .colpkg import-export
-    engram-mcp/           # MCP server binary
-    engram-cli/           # developer/self-use CLI
+    anka-core/          # domain + SQLite + FSRS
+    anka-apkg/          # .apkg / .colpkg import-export
+    anka-mcp/           # MCP server binary
+    anka-cli/           # developer/self-use CLI
   apps/                   # later: desktop (Tauri), web
   docs/
     ARCHITECTURE.md
@@ -91,7 +91,7 @@ engram/
 | `Media` | File referenced by notes |
 | `Preset` | FSRS + daily limits |
 
-Internal IDs are our own UUIDs/ULIDs. Import maps Anki IDs → Engram IDs and keeps a side table for re-export fidelity.
+Internal IDs are our own UUIDs/ULIDs. Import maps Anki IDs → Anka IDs and keeps a side table for re-export fidelity.
 
 ## Scheduling
 
@@ -102,9 +102,9 @@ Internal IDs are our own UUIDs/ULIDs. Import maps Anki IDs → Engram IDs and ke
 
 ## Storage
 
-- Single SQLite database per collection (`collection.egdb` or similar).
+- Single SQLite database per collection (`collection.akdb` or similar).
 - Media directory next to the DB.
-- Schema is owned by Engram; migrations are explicit.
+- Schema is owned by Anka; migrations are explicit.
 - Prefer boring relational tables over document blobs for notes/cards.
 
 ## Anki compatibility

@@ -1,0 +1,20 @@
+services:
+  anka-sync:
+    build:
+      context: ../..
+      dockerfile: crates/anka-sync/Dockerfile
+    image: anka-sync:0.1
+    container_name: anka-sync
+    ports:
+      - "8788:8788"
+    environment:
+      ANKA_SYNC_TOKEN: ${ANKA_SYNC_TOKEN:-change-me}
+      ANKA_SYNC_DB: /data/sync.db
+      ANKA_SYNC_LISTEN: 0.0.0.0:8788
+      RUST_LOG: info
+    volumes:
+      - anka-sync-data:/data
+    restart: unless-stopped
+
+volumes:
+  anka-sync-data:

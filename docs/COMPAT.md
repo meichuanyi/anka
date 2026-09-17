@@ -1,6 +1,6 @@
 # Compatibility with Anki
 
-Engram is **compatible with Anki data files**, not with the Anki application platform.
+Anka is **compatible with Anki data files**, not with the Anki application platform.
 
 ## Supported
 

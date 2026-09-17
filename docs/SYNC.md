@@ -1,18 +1,18 @@
-# Sync design (Engram)
+# Sync design (Anka)
 
 ## Current status (M0–M2)
 
-**There is no multi-device sync.** Engram is local-first:
+**There is no multi-device sync.** Anka is local-first:
 
-- One SQLite collection file (`collection.egdb`)
+- One SQLite collection file (`collection.akdb`)
 - Media folder next to the collection
 - All clients (CLI / MCP / serve / Tauri) open the **same local file**
 
-“Sync” today means: point every tool at the same `ENGRAM_COLLECTION` path, or copy the file yourself.
+“Sync” today means: point every tool at the same `ANKA_COLLECTION` path, or copy the file yourself.
 
 ```text
   CLI ──┐
-  MCP ──┼──► collection.egdb + media/
+  MCP ──┼──► collection.akdb + media/
   Web ──┤
 Tauri ──┘
 ```
@@ -64,7 +64,7 @@ Device A                    Relay / self-host              Device B
 
 ### Auth / hosting
 
-1. **Self-host**: single binary `engram-sync` + token
+1. **Self-host**: single binary `anka-sync` + token
 2. **Hosted (optional commercial)**: same protocol, account + quota for media
 3. Local-only users never need the network
 
@@ -77,16 +77,16 @@ Device A                    Relay / self-host              Device B
 
 | Need | Workaround |
 |------|------------|
-| Phone + PC same library | Use `engram-serve` on LAN; mobile browser hits `http://pc-ip:8787` |
-| Backup | Copy `collection.egdb` + `media/` |
-| Move machine | Zip the pair; or `engram export` / `import` `.apkg` |
-| Share a deck | `engram export` → send `.apkg` |
+| Phone + PC same library | Use `anka-serve` on LAN; mobile browser hits `http://pc-ip:8787` |
+| Backup | Copy `collection.akdb` + `media/` |
+| Move machine | Zip the pair; or `anka export` / `import` `.apkg` |
+| Share a deck | `anka export` → send `.apkg` |
 
 ## Sequencing
 
 - [x] Single-machine multi-client (file + HTTP)
-- [x] `engram-sync` self-host prototype (append-only log + token)
-- [x] CLI `engram sync push|pull` with LWW / revlog union merge
+- [x] `anka-sync` self-host prototype (append-only log + token)
+- [x] CLI `anka sync push|pull` with LWW / revlog union merge
 - [ ] Media blob sync
 - [ ] Hosted relay (only if demand)
 
@@ -96,20 +96,20 @@ Server:
 
 ```bash
 # local
-export ENGRAM_SYNC_TOKEN=please-change-me
-cargo run -p engram-sync
+export ANKA_SYNC_TOKEN=please-change-me
+cargo run -p anka-sync
 
 # docker
-cd crates/engram-sync && ENGRAM_SYNC_TOKEN=please-change-me docker compose up -d --build
+cd crates/anka-sync && ANKA_SYNC_TOKEN=please-change-me docker compose up -d --build
 ```
 
 Clients:
 
 ```bash
-export ENGRAM_SYNC_SERVER=http://127.0.0.1:8788
-export ENGRAM_SYNC_TOKEN=please-change-me
-engram sync push
-engram sync pull
+export ANKA_SYNC_SERVER=http://127.0.0.1:8788
+export ANKA_SYNC_TOKEN=please-change-me
+anka sync push
+anka sync pull
 ```
 
 Verified locally: device A `add` → `push` (2 changes) → device B `pull` → note visible.

@@ -1,10 +1,10 @@
-# Engram MCP Design
+# Anka MCP Design
 
-MCP is a first-class client of `engram-core`, not a side API. Goal: **让 Agent 陪你复习**.
+MCP is a first-class client of `anka-core`, not a side API. Goal: **让 Agent 陪你复习**.
 
 ## Tagline
 
-> engram：让 Agent 陪你复习的记忆系统。
+> anka：让 Agent 陪你复习的记忆系统。
 
 ## Permission tiers
 
@@ -17,7 +17,7 @@ MCP is a first-class client of `engram-core`, not a side API. Goal: **让 Agent 
 
 Principles: local collection; reversible drafts for bulk creates; no silent network sync.
 
-## MVP tools (7) — M0/M1 shipped in `engram-mcp`
+## MVP tools (7) — M0/M1 shipped in `anka-mcp`
 
 | Tool | In | Out | RO |
 |------|----|-----|----|
@@ -31,31 +31,31 @@ Principles: local collection; reversible drafts for bulk creates; no silent netw
 
 Notes:
 
-- `front`/`back` come from `engram_core::front_back` (same helper as CLI `notes` / `review --show`), so multi-field Anki notes preview consistently.
+- `front`/`back` come from `anka_core::front_back` (same helper as CLI `notes` / `review --show`), so multi-field Anki notes preview consistently.
 - `fields` in search/due payloads are truncated (~240 chars/field) so Collins-style HTML dictionary blobs do not flood agent context.
 - `deck` is an **exact** deck name, including hierarchical Chinese names such as `考研词汇5500::1 Recite`.
 
 Transport: JSON-RPC 2.0 over stdio (`initialize`, `tools/list`, `tools/call`).
 
 ```bash
-export ENGRAM_COLLECTION=./collection.egdb
-./target/debug/engram-mcp
+export ANKA_COLLECTION=./collection.akdb
+./target/debug/anka-mcp
 # or
-./target/debug/engram-mcp --collection /path/to/collection.egdb
+./target/debug/anka-mcp --collection /path/to/collection.akdb
 ```
 
 ## Connect Claude Desktop / Cursor (stdio)
 
-Point the client at the `engram-mcp` binary and pass your collection path.
+Point the client at the `anka-mcp` binary and pass your collection path.
 
 **Claude Desktop** (`claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
-    "engram": {
-      "command": "E:/projects/nas/engram/target/debug/engram-mcp.exe",
-      "args": ["--collection", "E:/projects/nas/engram/.smoke/kaoyan3.egdb"],
+    "anka": {
+      "command": "/path/to/anka/target/debug/anka-mcp.exe",
+      "args": ["--collection", "/path/to/anka/.smoke/kaoyan3.akdb"],
       "env": {
         "RUST_LOG": "warn"
       }
@@ -69,15 +69,15 @@ Point the client at the `engram-mcp` binary and pass your collection path.
 ```json
 {
   "mcpServers": {
-    "engram": {
-      "command": "E:/projects/nas/engram/target/debug/engram-mcp.exe",
-      "args": ["--collection", "E:/projects/nas/engram/.smoke/kaoyan3.egdb"]
+    "anka": {
+      "command": "/path/to/anka/target/debug/anka-mcp.exe",
+      "args": ["--collection", "/path/to/anka/.smoke/kaoyan3.akdb"]
     }
   }
 }
 ```
 
-On macOS/Linux use the absolute path to `target/debug/engram-mcp` (no `.exe`). Relative paths in `args` are resolved from the client's working directory — prefer absolute paths.
+On macOS/Linux use the absolute path to `target/debug/anka-mcp` (no `.exe`). Relative paths in `args` are resolved from the client's working directory — prefer absolute paths.
 
 Smoke-check over stdin without a client:
 
@@ -85,7 +85,7 @@ Smoke-check over stdin without a client:
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"deck.list","arguments":{}}}' \
-  | ENGRAM_COLLECTION=./collection.egdb ./target/debug/engram-mcp
+  | ANKA_COLLECTION=./collection.akdb ./target/debug/anka-mcp
 ```
 
 ## Post-MVP tools
@@ -103,9 +103,9 @@ Unified response envelope: `{ok, message, ...payload}`.
 
 ## Resources
 
-- `engram://decks`
-- `engram://deck/{id}/stats`
-- `engram://fsrs/params`
+- `anka://decks`
+- `anka://deck/{id}/stats`
+- `anka://fsrs/params`
 
 Read-only; no write resources.
 
@@ -123,10 +123,10 @@ Read-only; no write resources.
 
 ## Differentiation vs Anki
 
-Anki has add-ons and community HTTP bridges, but no documented first-class MCP. Engram ships MCP tools as part of the product surface with stable schemas and explicit permission tiers.
+Anki has add-ons and community HTTP bridges, but no documented first-class MCP. Anka ships MCP tools as part of the product surface with stable schemas and explicit permission tiers.
 
 ## Implementation notes (M1)
 
-- Binary: `engram-mcp` (stdio transport first).
-- Opens the same collection path as CLI (`ENGRAM_COLLECTION` or config).
+- Binary: `anka-mcp` (stdio transport first).
+- Opens the same collection path as CLI (`ANKA_COLLECTION` or config).
 - Never call out to network from tool handlers in M1.

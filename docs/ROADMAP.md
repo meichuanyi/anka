@@ -1,21 +1,21 @@
-# Engram Roadmap
+# Anka Roadmap
 
 ## M0 — Self-use core (current)
 
 Goal: replace a personal Anki workflow for import + daily review on one machine.
 
 - [x] Repo + architecture
-- [ ] `engram-core`: collection open/create, decks, notes, cards
+- [ ] `anka-core`: collection open/create, decks, notes, cards
 - [ ] SQLite schema + migrations
 - [ ] FSRS answer/next-state
-- [ ] `engram-apkg`: import `.apkg`
-- [ ] `engram-cli`: `import`, `deck list`, `review`, `stats`
+- [ ] `anka-apkg`: import `.apkg`
+- [ ] `anka-cli`: `import`, `deck list`, `review`, `stats`
 
 Success check: import a real `.apkg`, review 20 cards from CLI, collection survives restart.
 
 ## M1 — AI / MCP differentiation
 
-- [ ] `engram-mcp` stdio server
+- [ ] `anka-mcp` stdio server
 - [ ] Tools: search, due cards, create notes, answer card
 - [ ] Material → cards generation flow (app-side, provider-agnostic)
 - [ ] Opt-in tools: batch ops, FSRS optimize
@@ -26,7 +26,7 @@ Success check: an MCP client can build a deck from a pasted outline and review i
 
 - [x] Tauri shell scaffold (`apps/desktop`)
 - [x] Review screen: deck list → flip → grade (keyboard 1-4 / Space)
-- [x] Dual transport: Tauri IPC + local HTTP (`engram-serve`)
+- [x] Dual transport: Tauri IPC + local HTTP (`anka-serve`)
 - [x] FSRS feedback on grade (stability, next due)
 - [x] Design system pass (dark void + paper card)
 - [x] Media playback/render (HTTP `/media` + sound button + autoplay on card)

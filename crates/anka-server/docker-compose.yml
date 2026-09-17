@@ -1,0 +1,21 @@
+services:
+  anka:
+    build:
+      context: ../..
+      dockerfile: crates/anka-server/Dockerfile
+    image: anka-server:0.1
+    container_name: anka-server
+    ports:
+      - "8787:8787"
+    environment:
+      ANKA_SERVER_TOKEN: ${ANKA_SERVER_TOKEN:-change-me}
+      ANKA_COLLECTION: /data/collection.akdb
+      ANKA_SERVER_LISTEN: 0.0.0.0:8787
+      ANKA_SERVER_STATIC: /app/dist
+      RUST_LOG: info
+    volumes:
+      - anka-data:/data
+    restart: unless-stopped
+
+volumes:
+  anka-data:

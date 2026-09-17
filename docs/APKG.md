@@ -1,4 +1,4 @@
-# Anki `.apkg` format (import notes for Engram)
+# Anki `.apkg` format (import notes for Anka)
 
 Source of truth: Anki repo (`rslib/src/import_export/`, `storage/`).
 
@@ -15,7 +15,7 @@ Source of truth: Anki repo (`rslib/src/import_export/`, `storage/`).
 Version detect: read `meta`; else if `collection.anki21` → Legacy2; else Legacy1.  
 Schema version: `col.ver` (V11 vs V18+).
 
-## What Engram imports today
+## What Anka imports today
 
 | Item | V11 | V18 |
 |------|-----|-----|
@@ -26,30 +26,30 @@ Schema version: `col.ver` (V11 vs V18+).
 | media map | JSON map + payloads | **warning only** (zstd+protobuf) |
 | revlog / schedule | skipped | skipped |
 
-Multi-template notes create **one Engram card per Anki card** (template `ord` preserved).
+Multi-template notes create **one Anka card per Anki card** (template `ord` preserved).
 
 ## Critical V15+ gotcha
 
-V15+ often clears `col.decks` / `col.models` to `''`. Import **must** fall through to split tables or every deck becomes `Default`. Engram tests cover this (`import_v18_col_residual_decks_json`).
+V15+ often clears `col.decks` / `col.models` to `''`. Import **must** fall through to split tables or every deck becomes `Default`. Anka tests cover this (`import_v18_col_residual_decks_json`).
 
 ## V18 deck names
 
 `decks.name` uses `\x1f` as hierarchy separator (human form `::`). Import converts to `::`.
 
-## Engram mapping
+## Anka mapping
 
-| Anki | Engram |
+| Anki | Anka |
 |------|--------|
 | deck name `A::B` | deck name kept |
 | note fields | `Note.fields` |
-| each card | one Engram card in that card's deck (`template_idx = ord`) |
+| each card | one Anka card in that card's deck (`template_idx = ord`) |
 | anki ids | `anki_id_map` side table |
 
 ## Real-package validation
 
 Validated with `考研词汇5500.apkg` (Legacy1 `collection.anki2`, V11):
 
-| Metric | Source | Engram |
+| Metric | Source | Anka |
 |--------|--------|--------|
 | notes | 5494 | 5494 |
 | cards | 16481 (3 templates) | 16481 |
@@ -61,7 +61,7 @@ Lessons:
 
 - Multi-template notes must create **one card per Anki card** (not one per note).
 - Multi-field dictionary notes need preview heuristics: phonetic + short defs, strip HTML.
-- `cargo test` does **not** refresh `target/debug/engram.exe` — always `cargo build` before CLI runs.
+- `cargo test` does **not** refresh `target/debug/anka.exe` — always `cargo build` before CLI runs.
 
 ## Export (later)
 

@@ -197,7 +197,7 @@ function render() {
 
 function renderTop() {
   const top = el("div", "top");
-  top.appendChild(el("div", "brand", "Engram"));
+  top.appendChild(el("div", "brand", "Anka"));
   const label =
     mode === "add"
       ? "新建卡片"
@@ -306,7 +306,7 @@ function renderDecks(list: DeckCounts[]) {
       el(
         "p",
         undefined,
-        "用 CLI 导入 .apkg，或设置 ENGRAM_COLLECTION 指向已有收藏。",
+        "用 CLI 导入 .apkg，或设置 ANKA_COLLECTION 指向已有收藏。",
       ),
     );
     return wrap;

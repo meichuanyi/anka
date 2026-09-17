@@ -1,10 +1,10 @@
-# Engram Desktop — Design Spec (M2)
+# Anka Desktop — Design Spec (M2)
 
 Mode: **expressive product UI** (review session is the hero). Not an admin console.
 
 ## Subject
 
-Engram is a modern SRS client. The daily job is **one focused review session**: see a prompt, recall, grade, next. Everything else (decks, stats, import) is secondary chrome.
+Anka is a modern SRS client. The daily job is **one focused review session**: see a prompt, recall, grade, next. Everything else (decks, stats, import) is secondary chrome.
 
 Audience: self-learners (e.g. 考研词汇) who want calm, fast, beautiful study — not Anki's dense browser.
 
@@ -79,6 +79,6 @@ Scale: headword 48–64px / 1.15; definition 17px / 1.65; UI 13–14px; data 12p
 
 ## Implementation notes
 
-- Tauri 2 commands call `engram-core` Collection directly (no HTTP server required)
+- Tauri 2 commands call `anka-core` Collection directly (no HTTP server required)
 - Frontend: Vite + vanilla TS + CSS (no Tailwind) for full token control
-- Collection path: `ENGRAM_COLLECTION` or picker
+- Collection path: `ANKA_COLLECTION` or picker

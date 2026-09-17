@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/engram-core",
-    "crates/engram-apkg",
-    "crates/engram-cli",
-    "crates/engram-mcp",
-    "crates/engram-serve",
-    "crates/engram-sync",
-    "crates/engram-server",
+    "crates/anka-core",
+    "crates/anka-apkg",
+    "crates/anka-cli",
+    "crates/anka-mcp",
+    "crates/anka-serve",
+    "crates/anka-sync",
+    "crates/anka-server",
     "apps/desktop/src-tauri",
 ]
 
@@ -15,16 +15,16 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/engram-app/engram"
+repository = "https://github.com/meichuanyi/anka"
 rust-version = "1.80"
 
 [workspace.dependencies]
-engram-core = { path = "crates/engram-core" }
-engram-apkg = { path = "crates/engram-apkg" }
-engram-mcp = { path = "crates/engram-mcp" }
-engram-serve = { path = "crates/engram-serve" }
-engram-sync = { path = "crates/engram-sync" }
-engram-server = { path = "crates/engram-server" }
+anka-core = { path = "crates/anka-core" }
+anka-apkg = { path = "crates/anka-apkg" }
+anka-mcp = { path = "crates/anka-mcp" }
+anka-serve = { path = "crates/anka-serve" }
+anka-sync = { path = "crates/anka-sync" }
+anka-server = { path = "crates/anka-server" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }

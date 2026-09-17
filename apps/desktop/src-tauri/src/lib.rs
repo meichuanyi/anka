@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use engram_core::{
+use anka_core::{
     extract_sounds, front_back_for_template, media_dir_for_collection, strip_html, CardTemplate,
     Collection, Rating,
 };
@@ -161,7 +161,7 @@ fn grade_card(
     let mut col = state.collection.lock().map_err(|e| e.to_string())?;
     let rating = Rating::from_u8(rating).ok_or_else(|| "评分必须是 1-4".to_string())?;
     let uuid = uuid::Uuid::parse_str(&card_id).map_err(|e| e.to_string())?;
-    let id = engram_core::Id::from(uuid);
+    let id = anka_core::Id::from(uuid);
     let card = col.answer_card(id, rating, 0).map_err(|e| e.to_string())?;
     Ok(GradeResult {
         next_due: card.state.due_at.to_rfc3339(),
@@ -199,7 +199,7 @@ fn update_note(
     let uuid = uuid::Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let note = col
         .update_note_fields(
-            engram_core::Id::from(uuid),
+            anka_core::Id::from(uuid),
             fields,
             tags.unwrap_or_default(),
         )
@@ -212,7 +212,7 @@ fn get_note(state: State<'_, AppState>, id: String) -> Result<NoteDto, String> {
     let col = state.collection.lock().map_err(|e| e.to_string())?;
     let uuid = uuid::Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let note = col
-        .get_note(engram_core::Id::from(uuid))
+        .get_note(anka_core::Id::from(uuid))
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "笔记不存在".to_string())?;
     note_dto(&col, note)
@@ -254,7 +254,7 @@ pub struct SearchNotesResult {
     items: Vec<NoteDto>,
 }
 
-fn note_dto(col: &Collection, note: engram_core::Note) -> Result<NoteDto, String> {
+fn note_dto(col: &Collection, note: anka_core::Note) -> Result<NoteDto, String> {
     let deck_name = col
         .list_decks()
         .map_err(|e| e.to_string())?
@@ -262,7 +262,7 @@ fn note_dto(col: &Collection, note: engram_core::Note) -> Result<NoteDto, String
         .find(|d| d.id == note.deck_id)
         .map(|d| d.name)
         .unwrap_or_default();
-    let (front, back) = engram_core::front_back(&note.fields);
+    let (front, back) = anka_core::front_back(&note.fields);
     Ok(NoteDto {
         id: note.id.to_string(),
         deck_id: note.deck_id.to_string(),
@@ -276,9 +276,9 @@ fn note_dto(col: &Collection, note: engram_core::Note) -> Result<NoteDto, String
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let path = std::env::var("ENGRAM_COLLECTION")
+    let path = std::env::var("ANKA_COLLECTION")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("collection.egdb"));
+        .unwrap_or_else(|_| PathBuf::from("collection.akdb"));
 
     let collection = Collection::open_or_create(&path)
         .unwrap_or_else(|e| panic!("无法打开收藏 {}: {e}", path.display()));
@@ -299,5 +299,5 @@ pub fn run() {
             search_notes
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Engram desktop");
+        .expect("error while running Anka desktop");
 }

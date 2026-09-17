@@ -1222,12 +1222,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
-name = "engram-apkg"
+name = "anka-apkg"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "engram-core",
+ "anka-core",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1240,15 +1240,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-cli"
+name = "anka-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
  "directories",
- "engram-apkg",
- "engram-core",
+ "anka-apkg",
+ "anka-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1258,7 +1258,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-core"
+name = "anka-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1274,11 +1274,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-desktop"
+name = "anka-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "engram-core",
+ "anka-core",
  "serde",
  "serde_json",
  "tauri",
@@ -1288,14 +1288,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-mcp"
+name = "anka-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "engram-apkg",
- "engram-core",
+ "anka-apkg",
+ "anka-core",
  "serde",
  "serde_json",
  "tracing",
@@ -1304,14 +1304,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-serve"
+name = "anka-serve"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
  "clap",
- "engram-core",
+ "anka-core",
  "serde",
  "serde_json",
  "tokio",
@@ -1322,17 +1322,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-server"
+name = "anka-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "chrono",
  "clap",
- "engram-apkg",
- "engram-core",
- "engram-mcp",
- "engram-serve",
+ "anka-apkg",
+ "anka-core",
+ "anka-mcp",
+ "anka-serve",
  "serde",
  "serde_json",
  "tokio",
@@ -1343,7 +1343,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "engram-sync"
+name = "anka-sync"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1351,7 +1351,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "engram-core",
+ "anka-core",
  "rusqlite",
  "serde",
  "serde_json",
