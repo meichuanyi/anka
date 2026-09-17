@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Anka totem">
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 1024 1024" role="img" aria-label="Anka totem">
   <defs>
     <radialGradient id="bg" cx="50%" cy="38%" r="75%">
       <stop offset="0%" stop-color="#22161c"/>
