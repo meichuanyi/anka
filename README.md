@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/anka-totem.svg" alt="Anka — the firebird of memory" width="380"/>
+![Anka — the firebird of memory](docs/assets/anka-totem.svg)
 
 # Anka
 
