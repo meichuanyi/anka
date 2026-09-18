@@ -367,12 +367,23 @@ function renderError(message: string) {
   const wrap = el("div", "error");
   wrap.appendChild(el("h2", undefined, "出错了"));
   wrap.appendChild(el("p", undefined, message));
-  const btn = el("button", "reveal", "重试");
-  btn.addEventListener("click", () => {
+  const actions = el("div", "form-actions");
+  const retry = el("button", "reveal", "重试");
+  retry.addEventListener("click", () => {
     error = null;
     void boot();
   });
-  wrap.appendChild(btn);
+  actions.appendChild(retry);
+  if (isTauri() || useRemote()) {
+    const settings = el("button", "reveal", "⚙ 连接设置");
+    settings.addEventListener("click", () => {
+      error = null;
+      mode = "settings";
+      render();
+    });
+    actions.appendChild(settings);
+  }
+  wrap.appendChild(actions);
   return wrap;
 }
 
