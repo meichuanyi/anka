@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/anka-core",
+    "crates/anka-ankiweb",
     "crates/anka-apkg",
     "crates/anka-cli",
     "crates/anka-mcp",
@@ -19,6 +20,7 @@ repository = "https://github.com/meichuanyi/anka"
 rust-version = "1.80"
 
 [workspace.dependencies]
+anka-ankiweb = { path = "crates/anka-ankiweb" }
 anka-core = { path = "crates/anka-core" }
 anka-apkg = { path = "crates/anka-apkg" }
 anka-mcp = { path = "crates/anka-mcp" }

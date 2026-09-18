@@ -32,6 +32,25 @@ enum Commands {
         #[arg(long)]
         deck: Option<String>,
     },
+    /// Download the full collection from AnkiWeb into a .anki2 file
+    AnkiwebPull {
+        #[arg(long)]
+        user: String,
+        /// AnkiWeb password (prefer the ANKIWEB_PASSWORD env var)
+        #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
+        password: String,
+        /// Output path for the collection.anki2 file
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Download from AnkiWeb and import into the current collection
+    AnkiwebImport {
+        #[arg(long)]
+        user: String,
+        /// AnkiWeb password (prefer the ANKIWEB_PASSWORD env var)
+        #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
+        password: String,
+    },
     /// Export the collection to an Anki .apkg package
     Export {
         /// Output .apkg path
@@ -143,6 +162,34 @@ fn main() -> Result<()> {
             }
             if report.skipped_cards > 0 {
                 println!("  skipped_cards={}", report.skipped_cards);
+            }
+        }
+        Commands::AnkiwebPull {
+            user,
+            password,
+            out,
+        } => {
+            println!("login {user} @ AnkiWeb ...");
+            let hkey = anka_ankiweb::login(&user, &password)?;
+            println!("download full collection ...");
+            let data = anka_ankiweb::full_download(&hkey)?;
+            std::fs::write(&out, &data)?;
+            println!("saved {} ({} bytes)", out.display(), data.len());
+        }
+        Commands::AnkiwebImport { user, password } => {
+            let mut col = Collection::open_or_create(&path)?;
+            println!("login {user} @ AnkiWeb ...");
+            let hkey = anka_ankiweb::login(&user, &password)?;
+            println!("download full collection ...");
+            let data = anka_ankiweb::full_download(&hkey)?;
+            println!("downloaded {} bytes, importing ...", data.len());
+            let report = anka_ankiweb::import_into_collection(&data, &mut col)?;
+            println!(
+                "  decks={} notes={} cards={} revlog={} media={}",
+                report.decks, report.notes, report.cards, report.revlogs, report.media_copied
+            );
+            for w in &report.warnings {
+                println!("  warn: {w}");
             }
         }
         Commands::Export { out, deck } => {

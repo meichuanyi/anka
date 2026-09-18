@@ -65,6 +65,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "anka-ankiweb"
+version = "0.1.0"
+dependencies = [
+ "anka-apkg",
+ "anka-core",
+ "anyhow",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+ "zstd",
+]
+
+[[package]]
 name = "anka-apkg"
 version = "0.1.0"
 dependencies = [
@@ -86,6 +101,7 @@ dependencies = [
 name = "anka-cli"
 version = "0.1.0"
 dependencies = [
+ "anka-ankiweb",
  "anka-apkg",
  "anka-core",
  "anyhow",

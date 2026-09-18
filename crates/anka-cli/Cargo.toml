@@ -10,6 +10,7 @@ name = "anka"
 path = "src/main.rs"
 
 [dependencies]
+anka-ankiweb.workspace = true
 anka-core.workspace = true
 anka-apkg.workspace = true
 anyhow.workspace = true
