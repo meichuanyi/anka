@@ -139,9 +139,10 @@ MCP is a **first-class client**, not a bolt-on:
 
 - AnkiWeb protocol compatibility
 - Python add-on host
-- Mobile apps
 - Multi-user realtime collaboration
 - Replacing FSRS with a custom algorithm
+
+> Mobile is **in scope** via Tauri 2 (Android/iOS share the desktop frontend and Rust core). See [MOBILE.md](MOBILE.md).
 
 ## Design principles
 

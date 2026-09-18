@@ -552,3 +552,53 @@ button:not(:disabled):active {
   background: linear-gradient(90deg, var(--signal), var(--easy));
   transition: width 0.3s ease;
 }
+
+/* ===== Mobile / touch adaptation ===== */
+.settings-hint {
+  color: var(--mist);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 4px 0 16px;
+}
+
+@media (pointer: coarse) {
+  button,
+  .nav-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .nav-btn {
+    padding: 10px 16px;
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .top {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .top-nav {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+  .top-nav .nav-btn {
+    flex: 1;
+  }
+  .reveal {
+    width: 100%;
+    padding: 16px;
+    font-size: 1.1rem;
+  }
+  button.grade,
+  .actions .reveal {
+    flex: 1;
+    min-height: 56px;
+    font-size: 1.05rem;
+  }
+}

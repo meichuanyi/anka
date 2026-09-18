@@ -41,7 +41,7 @@ type NoteDto = {
   tags: string[];
 };
 
-type Mode = "home" | "session" | "add" | "browse" | "edit";
+type Mode = "home" | "session" | "add" | "browse" | "edit" | "settings";
 
 type Session = {
   deckName: string;
@@ -55,30 +55,30 @@ type Session = {
 /** Dual transport: Tauri IPC when available, otherwise local HTTP API. */
 const api = {
   async decks(): Promise<DeckCounts[]> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<DeckCounts[]>("list_decks");
     }
-    const res = await fetch("/api/decks");
+    const res = await apiFetch("/api/decks");
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   async due(deck: string, limit = 50): Promise<DueCard[]> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<DueCard[]>("due_cards", { deck, limit });
     }
     const qs = new URLSearchParams({ deck, limit: String(limit) });
-    const res = await fetch(`/api/due?${qs}`);
+    const res = await apiFetch(`/api/due?${qs}`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   async grade(cardId: string, rating: number): Promise<GradeResult | void> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<GradeResult>("grade_card", { cardId, rating });
     }
-    const res = await fetch("/api/grade", {
+    const res = await apiFetch("/api/grade", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cardId, rating }),
@@ -87,11 +87,11 @@ const api = {
     return res.json();
   },
   async createNote(deck: string, front: string, back: string, tags: string[] = []): Promise<NoteDto> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<NoteDto>("create_note", { deck, front, back, tags });
     }
-    const res = await fetch("/api/notes", {
+    const res = await apiFetch("/api/notes", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ deck, front, back, tags }),
@@ -100,11 +100,11 @@ const api = {
     return res.json();
   },
   async updateNote(id: string, fields: string[], tags: string[] = []): Promise<NoteDto> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<NoteDto>("update_note", { id, fields, tags });
     }
-    const res = await fetch(`/api/notes/${id}`, {
+    const res = await apiFetch(`/api/notes/${id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ fields, tags }),
@@ -113,21 +113,21 @@ const api = {
     return res.json();
   },
   async searchNotes(q: string, limit = 30): Promise<{ total: number; items: NoteDto[] }> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke("search_notes", { q, limit });
     }
     const qs = new URLSearchParams({ q, limit: String(limit) });
-    const res = await fetch(`/api/notes?${qs}`);
+    const res = await apiFetch(`/api/notes?${qs}`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
   async getNote(id: string): Promise<NoteDto> {
-    if (isTauri()) {
+    if (native()) {
       const { invoke } = await import("@tauri-apps/api/core");
       return invoke<NoteDto>("get_note", { id });
     }
-    const res = await fetch(`/api/notes/${id}`);
+    const res = await apiFetch(`/api/notes/${id}`);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
@@ -135,6 +135,30 @@ const api = {
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** Remote self-hosted server (anka-server) config; empty base = local / same-origin. */
+function remoteConfig(): { base: string; token: string } {
+  return {
+    base: (localStorage.getItem("anka.server") || "").replace(/\/+$/, ""),
+    token: localStorage.getItem("anka.token") || "",
+  };
+}
+
+/** Prefer a configured remote server over the local collection (mobile thin-client mode). */
+function native(): boolean {
+  return isTauri() && !useRemote();
+}
+
+function useRemote(): boolean {
+  return remoteConfig().base !== "";
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const { base, token } = remoteConfig();
+  const headers = new Headers(init?.headers);
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  return fetch(base + path, { ...init, headers });
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -179,6 +203,8 @@ function render() {
     stage.appendChild(renderBrowse());
   } else if (mode === "edit" && editNote) {
     stage.appendChild(renderEditForm(editNote));
+  } else if (mode === "settings") {
+    stage.appendChild(renderSettings());
   } else {
     stage.appendChild(renderDecks(decks));
   }
@@ -205,9 +231,13 @@ function renderTop() {
         ? "浏览笔记"
         : mode === "edit"
           ? "编辑笔记"
-          : session
-            ? session.deckName
-            : "本地收藏 · FSRS";
+          : mode === "settings"
+            ? "连接服务器"
+            : session
+              ? session.deckName
+              : useRemote()
+                ? `远程 · ${remoteConfig().base.replace(/^https?:\/\//, "")}`
+                : "本地收藏 · FSRS";
   top.appendChild(el("div", "path", label));
 
   const chip = el("div", "chip");
@@ -235,7 +265,13 @@ function renderTop() {
       mode = "browse";
       void loadBrowse();
     };
-    nav.append(addBtn, browseBtn);
+    const settingsBtn = el("button", "nav-btn", "⚙");
+    settingsBtn.title = "连接服务器";
+    settingsBtn.onclick = () => {
+      mode = "settings";
+      render();
+    };
+    nav.append(addBtn, browseBtn, settingsBtn);
   } else {
     const back = el("button", "nav-btn", "← 返回");
     back.onclick = () => {
@@ -254,6 +290,50 @@ function renderTop() {
   }
   top.appendChild(nav);
   return top;
+}
+
+function renderSettings() {
+  const panel = el("div", "form-panel");
+  panel.appendChild(el("h1", undefined, "连接服务器"));
+  panel.appendChild(
+    el(
+      "p",
+      "settings-hint",
+      "填写自托管 anka-server 地址即为客户端模式（手机/平板推荐，与 NAS 上的收藏实时同步）；留空则使用本机收藏。",
+    ),
+  );
+  const cfg = remoteConfig();
+  const serverField = fieldInput("服务器地址", cfg.base);
+  serverField.input.placeholder = "http://192.168.10.3:8787";
+  const tokenField = fieldInput("Token（ANKA_SERVER_TOKEN）", cfg.token);
+  panel.append(serverField.wrap, tokenField.wrap);
+
+  const actions = el("div", "form-actions");
+  const save = el("button", "reveal", "保存并连接");
+  save.onclick = () => {
+    const url = serverField.input.value.trim().replace(/\/+$/, "");
+    localStorage.setItem("anka.server", url);
+    localStorage.setItem("anka.token", tokenField.input.value.trim());
+    session = null;
+    mode = "home";
+    void refreshDecks();
+  };
+  const clear = el("button", "nav-btn", "断开（用本机收藏）");
+  clear.onclick = () => {
+    localStorage.removeItem("anka.server");
+    localStorage.removeItem("anka.token");
+    session = null;
+    mode = "home";
+    void refreshDecks();
+  };
+  const cancel = el("button", "nav-btn", "← 返回");
+  cancel.onclick = () => {
+    mode = "home";
+    render();
+  };
+  actions.append(save, clear, cancel);
+  panel.appendChild(actions);
+  return panel;
 }
 
 function renderKeys() {
@@ -356,9 +436,9 @@ function mediaUrl(raw: string): string {
       return raw;
     }
     const parts = raw.split(/[\\/]/);
-    return `/media/${encodeURIComponent(parts[parts.length - 1] ?? raw)}`;
+    return `${remoteConfig().base}/media/${encodeURIComponent(parts[parts.length - 1] ?? raw)}`;
   }
-  return `/media/${encodeURIComponent(raw)}`;
+  return `${remoteConfig().base}/media/${encodeURIComponent(raw)}`;
 }
 
 let audioEl: HTMLAudioElement | null = null;

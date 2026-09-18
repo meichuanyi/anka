@@ -6,7 +6,7 @@ use anka_core::{
     Collection, Rating,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 pub struct AppState {
     pub collection: Mutex<Collection>,
@@ -276,18 +276,35 @@ fn note_dto(col: &Collection, note: anka_core::Note) -> Result<NoteDto, String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let path = std::env::var("ANKA_COLLECTION")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("collection.akdb"));
-
-    let collection = Collection::open_or_create(&path)
-        .unwrap_or_else(|e| panic!("无法打开收藏 {}: {e}", path.display()));
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState {
-            collection: Mutex::new(collection),
-            path,
+        .setup(|app| {
+            // Desktop: ANKA_COLLECTION env or CWD (as before).
+            // Mobile: no env/CWD — the collection lives in the app sandbox.
+            let path = std::env::var("ANKA_COLLECTION")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    #[cfg(mobile)]
+                    {
+                        app.path()
+                            .app_data_dir()
+                            .expect("app data dir unavailable")
+                            .join("collection.akdb")
+                    }
+                    #[cfg(desktop)]
+                    {
+                        PathBuf::from("collection.akdb")
+                    }
+                });
+
+            let collection = Collection::open_or_create(&path)
+                .unwrap_or_else(|e| panic!("无法打开收藏 {}: {e}", path.display()));
+
+            app.manage(AppState {
+                collection: Mutex::new(collection),
+                path,
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_decks,

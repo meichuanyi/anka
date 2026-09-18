@@ -134,6 +134,7 @@ docs/                architecture, roadmap, compat, apkg, mcp
 - [Anki compatibility](docs/COMPAT.md)
 - [.apkg notes](docs/APKG.md)
 - [MCP design](docs/MCP.md)
+- [Mobile (Android/iOS)](docs/MOBILE.md)
 
 ## License
 
