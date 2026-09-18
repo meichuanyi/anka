@@ -290,6 +290,11 @@ impl Collection {
         self.store().get_anki_id(kind, anki_id)
     }
 
+    /// Anka note ids that already have an Anki mapping (sync dedup key).
+    pub fn mapped_note_ids(&self) -> Result<Vec<String>> {
+        self.store().mapped_anka_ids("note")
+    }
+
     pub fn add_revlog(&mut self, entry: RevlogEntry) -> Result<()> {
         self.store().insert_revlog(&entry)
     }

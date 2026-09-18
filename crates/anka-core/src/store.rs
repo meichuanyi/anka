@@ -436,6 +436,18 @@ impl<'c> Store<'c> {
         Ok(())
     }
 
+    pub fn mapped_anka_ids(&self, kind: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT anka_id FROM anki_id_map WHERE kind = ?1")?;
+        let rows = stmt.query_map(params![kind], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub fn get_anki_id(&self, kind: &str, anki_id: &str) -> Result<Option<Id>> {
         self.conn
             .query_row(

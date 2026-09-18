@@ -17,6 +17,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Add notes to the agent collection locally (no network)
+    AddBatch {
+        #[arg(long)]
+        agent: PathBuf,
+        /// JSON file: array of {deck, fields[2], tags}
+        #[arg(long)]
+        file: PathBuf,
+        /// Where to write the added notes' new Anki ids (JSON array)
+        #[arg(long)]
+        map_out: PathBuf,
+    },
     /// Two-way incremental sync between the agent collection and AnkiWeb
     Sync {
         /// Path to the agent collection (.anki2), created if missing
@@ -26,6 +37,13 @@ enum Command {
         user: String,
         #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
         password: String,
+        /// Optional JSON file of notes to add before syncing
+        /// (array of {deck, fields[2], tags})
+        #[arg(long)]
+        add_batch: Option<PathBuf>,
+        /// Where to write the added notes' new Anki ids (JSON array)
+        #[arg(long)]
+        map_out: Option<PathBuf>,
     },
     /// Replace the agent collection with the AnkiWeb copy (safe: local only)
     Pull {
@@ -42,10 +60,21 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::AddBatch {
+            agent,
+            file,
+            map_out,
+        } => {
+            let mut col = open_col(&agent)?;
+            let added = add_batch_notes(&mut col, &file)?;
+            std::fs::write(&map_out, serde_json::to_vec_pretty(&added)?)?;
+            println!("added {} notes", added.len());
+        }
         Command::Sync {
             agent,
             user,
             password,
+            ..
         } => {
             println!("login {user} @ AnkiWeb ...");
             let client = reqwest::Client::new();
@@ -76,4 +105,55 @@ fn open_col(path: &PathBuf) -> Result<anki::collection::Collection> {
     anki::collection::CollectionBuilder::new(path)
         .build()
         .context("打开 agent 收藏失败")
+}
+
+#[derive(serde::Deserialize)]
+struct BatchNote {
+    deck: String,
+    fields: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct AddedNote {
+    index: usize,
+    note_id: i64,
+    card_ids: Vec<i64>,
+}
+
+fn add_batch_notes(
+    col: &mut anki::collection::Collection,
+    batch_file: &PathBuf,
+) -> Result<Vec<AddedNote>> {
+    let raw = std::fs::read_to_string(batch_file)?;
+    let batch: Vec<BatchNote> = serde_json::from_str(&raw).context("解析 add_batch JSON 失败")?;
+    let notetype = col
+        .get_notetype_by_name("Basic")?
+        .ok_or_else(|| anyhow::anyhow!("Basic notetype not found"))?;
+    let mut out = Vec::new();
+    for (index, b) in batch.into_iter().enumerate() {
+        let deck = col.get_or_create_normal_deck(&b.deck)?;
+        let mut note = anki::notes::Note::new(&notetype);
+        for (i, f) in b.fields.iter().enumerate() {
+            note.set_field(i, f.clone())?;
+        }
+        note.tags = b.tags;
+        col.add_note(&mut note, deck.id)?;
+        let card_ids = col
+            .search_cards(
+                anki::search::SearchNode::CardIds(note.id.0.to_string()),
+                anki::search::SortMode::NoOrder,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .into_iter()
+            .map(|cid| cid.0)
+            .collect();
+        out.push(AddedNote {
+            index,
+            note_id: note.id.0,
+            card_ids,
+        });
+    }
+    Ok(out)
 }
