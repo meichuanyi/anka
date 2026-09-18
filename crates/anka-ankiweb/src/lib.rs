@@ -7,6 +7,7 @@
 //! Passwords live only in the caller's memory for the duration of the call.
 
 use anyhow::{bail, Context, Result};
+use chrono::{DateTime, Utc};
 use std::path::Path;
 use serde::Deserialize;
 use serde_json::json;
@@ -208,4 +209,81 @@ pub fn merge_agent_into_collection(
         zip.finish()?;
     }
     anka_apkg::merge_apkg(tmp.path(), col).map_err(|e| e.into())
+}
+
+/// Merge scheduling state from the agent collection into Anka cards
+/// (download direction: grades made in Anki/AnkiDroid/AnkiWeb flow in).
+/// Only cards carrying an FSRS memory state (`data` JSON with s/d) are
+/// applied; everything else is left as-is to avoid corrupting scheduling.
+pub fn merge_scheduling_from_agent(
+    agent_path: &Path,
+    col: &mut anka_core::Collection,
+) -> Result<(u32, u32)> {
+    use rusqlite::OpenFlags;
+
+    let conn = rusqlite::Connection::open_with_flags(
+        agent_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let crt: i64 = conn.query_row("SELECT crt FROM col", [], |r| r.get(0))?;
+    let mut stmt = conn.prepare(
+        "SELECT id, due, ivl, reps, lapses, type, queue, data FROM cards WHERE reps > 0",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, i64>(5)?,
+            r.get::<_, i64>(6)?,
+            r.get::<_, String>(7).unwrap_or_default(),
+        ))
+    })?;
+
+    let now = chrono::Utc::now();
+    let (mut updated, mut skipped) = (0u32, 0u32);
+    for row in rows {
+        let (anki_id, due, _ivl, reps, lapses, ctype, queue, data) = row?;
+        let Some(anka_card) = col.anka_id_for_anki("card", &anki_id.to_string())? else {
+            skipped += 1;
+            continue;
+        };
+        // FSRS memory state lives in card.data for v3-scheduler cards
+        let (stability, difficulty) = serde_json::from_str::<serde_json::Value>(&data)
+            .ok()
+            .and_then(|v| {
+                let s = v.get("s").and_then(|x| x.as_f64())?;
+                let d = v.get("d").and_then(|x| x.as_f64())?;
+                Some((s as f32, d as f32))
+            })
+            .unwrap_or((0.0, 0.0));
+        if stability <= 0.0 {
+            skipped += 1;
+            continue;
+        }
+        // due: learning cards use epoch seconds, review/relearning use day
+        // numbers relative to the collection creation timestamp.
+        let due_at = if ctype == 1 || queue == 1 || queue == 3 {
+            chrono::TimeZone::timestamp_opt(&chrono::Utc, due, 0)
+                .single()
+                .unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::TimeZone::timestamp_opt(&chrono::Utc, crt + due * 86400, 0)
+                .single()
+                .unwrap_or_else(chrono::Utc::now)
+        };
+        let state = anka_core::CardState {
+            due_at,
+            stability,
+            difficulty,
+            reps: reps as u32,
+            lapses: lapses as u32,
+            last_review_at: None,
+        };
+        col.apply_synced_schedule(anka_card, &state, now)?;
+        updated += 1;
+    }
+    Ok((updated, skipped))
 }

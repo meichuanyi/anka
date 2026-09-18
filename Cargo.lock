@@ -71,7 +71,9 @@ dependencies = [
  "anka-apkg",
  "anka-core",
  "anyhow",
+ "chrono",
  "reqwest 0.12.28",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -168,6 +170,7 @@ name = "anka-serve"
 version = "0.1.0"
 dependencies = [
  "anka-ankiweb",
+ "anka-apkg",
  "anka-core",
  "anyhow",
  "axum",

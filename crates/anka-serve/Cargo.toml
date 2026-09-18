@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 anka-ankiweb.workspace = true
+anka-apkg.workspace = true
 anka-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true

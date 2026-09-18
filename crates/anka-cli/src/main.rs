@@ -315,14 +315,40 @@ fn main() -> Result<()> {
                 println!("upload complete");
             }
 
-            // 5. final merge: pull anything that changed during sync
+            // 5. final merge: scheduling state first, then content
             {
                 let mut col = Collection::open_or_create(&path)?;
+                let (sched_updated, sched_skipped) =
+                    anka_ankiweb::merge_scheduling_from_agent(&agent_path, &mut col)?;
+                println!(
+                    "scheduling: updated {} cards, skipped {} (no FSRS state)",
+                    sched_updated, sched_skipped
+                );
                 let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)?;
                 println!(
                     "merge up: created notes={} updated notes={} cards={}",
                     report.notes, report.notes_updated, report.cards
                 );
+                // media: copy any new files from the agent media dir
+                if let Some(agent_media) =
+                    agent_path.parent().map(|p| p.join("sync-agent.media"))
+                {
+                    if agent_media.is_dir() {
+                        let media_dir = anka_core::media_dir_for_collection(&path);
+                        std::fs::create_dir_all(&media_dir)?;
+                        let mut copied = 0u32;
+                        for entry in std::fs::read_dir(&agent_media)?.flatten() {
+                            let target = media_dir.join(entry.file_name());
+                            if !target.exists() {
+                                std::fs::copy(entry.path(), &target)?;
+                                copied += 1;
+                            }
+                        }
+                        if copied > 0 {
+                            println!("media: copied {} files", copied);
+                        }
+                    }
+                }
             }
         }
         Commands::AnkiwebImport { user, password } => {

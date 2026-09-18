@@ -295,6 +295,16 @@ impl Collection {
         self.store().mapped_anka_ids("note")
     }
 
+    /// Apply scheduling state pulled from AnkiWeb (via the agent collection).
+    pub fn apply_synced_schedule(
+        &mut self,
+        card_id: Id,
+        state: &crate::model::CardState,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        self.store().update_card_state(card_id, state, updated_at)
+    }
+
     pub fn add_revlog(&mut self, entry: RevlogEntry) -> Result<()> {
         self.store().insert_revlog(&entry)
     }
