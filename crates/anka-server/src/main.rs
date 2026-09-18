@@ -99,6 +99,15 @@ async fn main() -> Result<()> {
         args.listen,
         args.collection.display()
     );
+    // One-click client setup: opening this URL saves the connection token
+    // automatically (server + token pair), no manual entry needed.
+    if !token.is_empty() {
+        tracing::info!(
+            "setup link: http://{}:#t={}  (open in browser to auto-configure)",
+            args.listen,
+            token
+        );
+    }
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     axum::serve(listener, app).await?;
     Ok(())

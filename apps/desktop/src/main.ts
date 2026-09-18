@@ -658,7 +658,21 @@ function renderSession(s: Session) {
   return host;
 }
 
+/** One-click setup: anka-server logs a URL with #t=<token>; opening it
+ *  configures the connection to the serving origin automatically. */
+function applySetupToken() {
+  if (location.hash.length < 2) return;
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get("t");
+  if (token) {
+    localStorage.setItem("anka.server", location.origin);
+    localStorage.setItem("anka.token", token);
+  }
+  history.replaceState(null, "", location.pathname + location.search);
+}
+
 async function boot() {
+  applySetupToken();
   loading = true;
   render();
   try {
