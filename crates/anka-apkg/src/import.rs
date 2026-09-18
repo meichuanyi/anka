@@ -12,6 +12,8 @@ use chrono::{TimeZone, Utc};
 pub struct ImportReport {
     pub decks: u32,
     pub notes: u32,
+    /// merge mode only: notes that already existed and were updated
+    pub notes_updated: u32,
     pub cards: u32,
     pub revlogs: u32,
     pub media_copied: u32,
@@ -33,7 +35,21 @@ pub struct ImportReport {
 /// Media: V11 JSON `{"0":"file.png"}` maps are applied. V18 protobuf/zstd
 /// media maps are skipped with a warning (no panic).
 pub fn import_apkg(path: impl AsRef<Path>, col: &mut Collection) -> anyhow::Result<ImportReport> {
-    let path = path.as_ref();
+    run_import(path.as_ref(), col, false)
+}
+
+/// Merge mode for AnkiWeb sync: notes already known via `anki_id_map` get
+/// their fields/tags updated; unknown notes are created. Never duplicates.
+pub fn merge_apkg(path: impl AsRef<Path>, col: &mut Collection) -> anyhow::Result<ImportReport> {
+    run_import(path.as_ref(), col, true)
+}
+
+fn run_import(
+    path: &Path,
+    col: &mut Collection,
+    merge: bool,
+) -> anyhow::Result<ImportReport> {
+    let path = path;
     let file = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(file)?;
 
@@ -131,6 +147,13 @@ pub fn import_apkg(path: impl AsRef<Path>, col: &mut Collection) -> anyhow::Resu
     col.begin().map_err(|e| anyhow::anyhow!("{e}"))?;
     let import_result: anyhow::Result<()> = (|| {
         for (anki_note_id, fields, tags) in note_rows {
+            if merge {
+                if let Some(existing) = col.anka_id_for_anki("note", &anki_note_id)? {
+                    col.update_note_fields(existing, fields, tags)?;
+                    report.notes_updated += 1;
+                    continue;
+                }
+            }
             let card_idxs = cards_by_note.get(&anki_note_id).cloned().unwrap_or_default();
             // Place the note in the first related deck (or Default).
             let primary_anki_deck = card_idxs

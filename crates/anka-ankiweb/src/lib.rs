@@ -7,6 +7,7 @@
 //! Passwords live only in the caller's memory for the duration of the call.
 
 use anyhow::{bail, Context, Result};
+use std::path::Path;
 use serde::Deserialize;
 use serde_json::json;
 use std::io::Write;
@@ -185,4 +186,26 @@ pub fn import_into_collection(
         zip.finish()?;
     }
     anka_apkg::import_apkg(tmp.path(), col).map_err(|e| e.into())
+}
+
+/// Merge a bare agent `collection.anki2` into an Anka collection without
+/// duplicating: notes already known via `anki_id_map` get their fields/tags
+/// updated, unknown notes are created.
+pub fn merge_agent_into_collection(
+    agent_path: &Path,
+    col: &mut anka_core::Collection,
+) -> Result<anka_apkg::ImportReport> {
+    let data = std::fs::read(agent_path)?;
+    let tmp = tempfile::NamedTempFile::new()?;
+    {
+        let mut file = tmp.reopen()?;
+        let mut zip = zip::ZipWriter::new(&mut file);
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("collection.anki2", opts)?;
+        zip.write_all(&data)?;
+        zip.start_file("media", opts)?;
+        zip.write_all(b"{}")?;
+        zip.finish()?;
+    }
+    anka_apkg::merge_apkg(tmp.path(), col).map_err(|e| e.into())
 }

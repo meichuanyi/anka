@@ -43,6 +43,13 @@ enum Commands {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Two-way sync: agent collection <-> AnkiWeb, then merge into Anka
+    AnkiwebSync {
+        #[arg(long)]
+        user: String,
+        #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
+        password: String,
+    },
     /// Download from AnkiWeb and import into the current collection
     AnkiwebImport {
         #[arg(long)]
@@ -176,6 +183,38 @@ fn main() -> Result<()> {
             let data = c.full_download()?;
             std::fs::write(&out, &data)?;
             println!("saved {} ({} bytes)", out.display(), data.len());
+        }
+        Commands::AnkiwebSync { user, password } => {
+            let exe_dir = std::env::current_exe()?
+                .parent()
+                .context("no exe dir")?
+                .to_path_buf();
+            let agent_bin = exe_dir.join("anka-sync-agent");
+            let agent_path = path
+                .parent()
+                .context("collection has no parent")?
+                .join("sync-agent.anki2");
+            let status = std::process::Command::new(&agent_bin)
+                .args([
+                    "sync",
+                    "--agent",
+                    agent_path.to_string_lossy().as_ref(),
+                    "--user",
+                    &user,
+                    "--password",
+                    &password,
+                ])
+                .status()
+                .context("anka-sync-agent 未找到（先构建 crates/anka-sync-engine）")?;
+            if !status.success() {
+                bail!("同步代理执行失败");
+            }
+            let mut col = Collection::open_or_create(&path)?;
+            let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)?;
+            println!(
+                "merge: created notes={} updated notes={} cards={}",
+                report.notes, report.notes_updated, report.cards
+            );
         }
         Commands::AnkiwebImport { user, password } => {
             let mut col = Collection::open_or_create(&path)?;
