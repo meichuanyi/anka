@@ -158,7 +158,11 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const { base, token } = remoteConfig();
   const headers = new Headers(init?.headers);
   if (token) headers.set("authorization", `Bearer ${token}`);
-  return fetch(base + path, { ...init, headers });
+  const res = await fetch(base + path, { ...init, headers });
+  if (res.status === 401) {
+    throw new Error("Token 缺失或错误：点右上角 ⚙ 重新填写连接信息");
+  }
+  return res;
 }
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
