@@ -61,11 +61,22 @@ AnkiWeb 就是他们现成的免费中枢，可继续与 Anki/AnkiDroid 混用�
 - FSRS：现代 Anki 卡片本身就携带 FSRS 记忆状态（v3 调度器），可直接映射。
 - 媒体同步由官方引擎处理（msync 协议）。
 
+**M-A 构建配方（已在本机验证，`cargo check -p anki` 通过）**
+
+```bash
+# 官方 rslib 无需 Anki 的 ninja 构建系统，纯 cargo 即可编译，前提：
+export PROTOC=/usr/bin/protoc        # prost-build 需要显式指定（apt: protobuf-compiler）
+# fork 锁定 rust-toolchain 1.92，rustup 会自动安装
+cd /path/to/anki-fork && cargo check -p anki
+# 注意：不要在 download 前调 meta；重定向 Location 是新的端点根，
+# 需重拼 sync/<method>；偶发无 Location 的重定向为瞬时，原地重试。
+```
+
 **里程碑**
 
 | 里程碑 | 内容 | 量级 |
 |--------|------|------|
-| M-A | vendor `anki` crate，编译打通 | 数天 |
+| M-A | vendor `anki` crate，编译打通 | 数天 | ✅ 2026-09-18 已验证 |
 | M-B | agent 收藏与 AnkiWeb 全量往返 | 1 周 |
 | M-C | 映射层：notes/cards/decks/revlog 双向按 GUID 同步 | 2-3 周 |
 | M-D | 媒体同步 + 冲突提示 | 1-2 周 |
