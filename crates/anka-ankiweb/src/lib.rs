@@ -135,10 +135,13 @@ impl AnkiWebClient {
                         // 303 without Location = AnkiWeb throttle; back off and
                         // retry the same URL (not counted as a redirect hop).
                         transient_retries += 1;
-                        if transient_retries > 5 {
-                            bail!("AnkiWeb 持续限流（303 无 Location），请几分钟后重试");
+                        if transient_retries > 8 {
+                            bail!(
+                                "AnkiWeb 持续限流，请等待 10-30 分钟后再试（这是 AnkiWeb 的保护策略，不是故障）"
+                            );
                         }
-                        std::thread::sleep(Duration::from_millis(800 * u64::from(transient_retries)));
+                        let backoff = 1000u64 * (1 << transient_retries.min(6)); // 2s..64s
+                        std::thread::sleep(Duration::from_millis(backoff));
                     }
                 }
                 continue;
