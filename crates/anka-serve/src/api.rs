@@ -197,29 +197,28 @@ async fn ankiweb_sync(
 
         // 5. record mappings for pushed notes
         if !batch.is_empty() {
-            if let Ok(map_raw) = std::fs::read_to_string(&map_file) {
-                let entries: Vec<serde_json::Value> =
-                    serde_json::from_str(&map_raw).map_err(|e| e.to_string())?;
-                let mut col = state.collection.lock().map_err(|_| "lock")?;
-                for entry in &entries {
-                    let idx = entry["index"].as_u64().unwrap_or(0) as usize;
-                    if let Some((note_id, card_id)) = pairs.get(idx) {
-                        if let Some(anki_note) = entry["noteId"].as_i64() {
-                            col.put_anki_id("note", &anki_note.to_string(), *note_id)
+            let map_raw = std::fs::read_to_string(&map_file)
+                .map_err(|e| format!("读取 map-out 失败: {e}"))?;
+            let entries: Vec<serde_json::Value> =
+                serde_json::from_str(&map_raw).map_err(|e| e.to_string())?;
+            let mut col = state.collection.lock().map_err(|_| "lock")?;
+            for entry in &entries {
+                let idx = entry["index"].as_u64().unwrap_or(0) as usize;
+                if let Some((note_id, card_id)) = pairs.get(idx) {
+                    if let Some(anki_note) = entry["noteId"].as_i64() {
+                        col.put_anki_id("note", &anki_note.to_string(), *note_id)
+                            .map_err(|e| e.to_string())?;
+                    }
+                    if let Some(anki_card) =
+                        entry["cardIds"].as_array().and_then(|a| a.first())
+                    {
+                        if let Some(c) = anki_card.as_i64() {
+                            col.put_anki_id("card", &c.to_string(), *card_id)
                                 .map_err(|e| e.to_string())?;
-                        }
-                        if let Some(anki_card) =
-                            entry["cardIds"].as_array().and_then(|a| a.first())
-                        {
-                            if let Some(c) = anki_card.as_i64() {
-                                col.put_anki_id("card", &c.to_string(), *card_id)
-                                    .map_err(|e| e.to_string())?;
-                            }
                         }
                     }
                 }
             }
-            let _ = std::fs::remove_file(&map_file);
         }
         let _ = std::fs::remove_file(&batch_file);
 
@@ -231,7 +230,7 @@ async fn ankiweb_sync(
                 .map_err(|_| "collection lock poisoned".to_string())?;
             let (su, sk) = anka_ankiweb::merge_scheduling_from_agent(&agent_path, &mut col)
                 .map_err(|e| e.to_string())?;
-            let report = anka_apkg::merge_apkg(&agent_path, &mut col)
+            let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)
                 .map_err(|e| e.to_string())?;
             (su, sk, report.notes, report.notes_updated, report.cards)
         };
