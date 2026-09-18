@@ -67,6 +67,96 @@ async fn ankiweb_import(
     })))
 }
 
+#[derive(Deserialize)]
+struct AnkiwebSyncReq {
+    user: String,
+    password: String,
+}
+
+/// Two-way sync: run the anka-sync-agent (official engine) against AnkiWeb,
+/// then merge the agent collection into the serving collection.
+/// The password is used in-memory for a single login call and never stored.
+async fn ankiweb_sync(
+    State(state): State<Shared>,
+    Json(req): Json<AnkiwebSyncReq>,
+) -> Result<Json<serde_json::Value>, String> {
+    let agent_bin = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .map(|p| p.join("anka-sync-agent"))
+        .ok_or_else(|| "no exe dir".to_string())?;
+    let agent_path = state
+        .path
+        .parent()
+        .map(|p| p.join("sync-agent.anki2"))
+        .ok_or_else(|| "collection has no parent".to_string())?;
+    let media_dir = anka_core::media_dir_for_collection(&state.path);
+
+    let agent_path_clone = agent_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new(&agent_bin)
+            .args([
+                "sync",
+                "--agent",
+                agent_path_clone.to_string_lossy().as_ref(),
+                "--user",
+                &req.user,
+                "--password",
+                &req.password,
+            ])
+            .output()
+            .map_err(|e| anyhow::anyhow!("anka-sync-agent 未找到: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "{}",
+                if stderr.trim().is_empty() {
+                    "同步代理执行失败".to_string()
+                } else {
+                    stderr.trim().to_string()
+                }
+            );
+        }
+        // media: copy any new files from the agent media dir (name-based)
+        let mut media_copied = 0u32;
+        if let Some(agent_media) = agent_path_clone.parent().map(|p| p.join("agent.media")) {
+            if agent_media.is_dir() {
+                std::fs::create_dir_all(&media_dir)?;
+                for entry in std::fs::read_dir(&agent_media)?.flatten() {
+                    let target = media_dir.join(entry.file_name());
+                    if !target.exists() {
+                        std::fs::copy(entry.path(), &target)?;
+                        media_copied += 1;
+                    }
+                }
+            }
+        }
+        Ok::<u32, anyhow::Error>(media_copied)
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    let agent_path_for_merge = agent_path.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("collection lock poisoned"))?;
+        anka_ankiweb::merge_agent_into_collection(&agent_path_for_merge, &mut col)
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    Ok(Json(serde_json::json!({
+        "notesCreated": report.notes,
+        "notesUpdated": report.notes_updated,
+        "cards": report.cards,
+        "mediaCopied": report.media_copied,
+    })))
+}
+
 pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/api/health", get(health))
@@ -76,6 +166,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/notes", get(search_notes).post(create_note))
         .route("/api/notes/{id}", get(get_note).put(update_note))
         .route("/api/ankiweb/import", post(ankiweb_import))
+        .route("/api/ankiweb/sync", post(ankiweb_sync))
         .with_state(state)
 }
 

@@ -385,6 +385,47 @@ function renderSettings() {
       }
     };
     awActions.appendChild(awBtn);
+    if (!native()) {
+      const syncBtn = el("button", "nav-btn", "双向同步（内容）");
+      syncBtn.onclick = async () => {
+        const user = awUser.input.value.trim();
+        const pass = awPass.input.value;
+        if (!user || !pass) {
+          error = "请填写 AnkiWeb 邮箱和密码";
+          render();
+          return;
+        }
+        loading = true;
+        error = null;
+        render();
+        try {
+          const res = await apiFetch("/api/ankiweb/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ user, password: pass }),
+          });
+          const text = await res.text();
+          let r: { notesCreated?: number; notesUpdated?: number; cards?: number; mediaCopied?: number };
+          try {
+            r = JSON.parse(text);
+          } catch {
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          flash = `同步完成：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0} · 卡片 ${r.cards ?? 0} · 媒体 ${r.mediaCopied ?? 0}`;
+          loading = false;
+          await refreshDecks();
+        } catch (e) {
+          loading = false;
+          const msg = e instanceof Error ? e.message : String(e);
+          error = msg.includes("Token")
+            ? "先完成上方「① 数据来源」的连接保存（需要服务器的访问令牌），双向同步是通过它执行的"
+            : msg;
+          render();
+        }
+      };
+      awActions.appendChild(syncBtn);
+    }
+    awActions.appendChild(awBtn);
     card.appendChild(awActions);
     panel.appendChild(card);
   }
