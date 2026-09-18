@@ -602,3 +602,14 @@ button:not(:disabled):active {
     font-size: 1.05rem;
   }
 }
+
+.subcard {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 18px 0 6px;
+}
+.subcard h2 {
+  margin: 0 0 8px;
+  font-size: 1.02rem;
+}

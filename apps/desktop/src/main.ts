@@ -298,12 +298,20 @@ function renderTop() {
 
 function renderSettings() {
   const panel = el("div", "form-panel");
-  panel.appendChild(el("h1", undefined, "连接服务器"));
+  panel.appendChild(el("h1", undefined, "设置"));
   panel.appendChild(
     el(
       "p",
       "settings-hint",
-      "填写自托管 anka-server 地址即为客户端模式（手机/平板推荐，与 NAS 上的收藏实时同步）；留空则使用本机收藏。",
+      "① 数据来源（二选一，保存后持续生效）② 一次性迁移（操作，做完即止）。两件事互不影响。",
+    ),
+  );
+  panel.appendChild(el("h2", undefined, "① 数据来源：连接服务器"));
+  panel.appendChild(
+    el(
+      "p",
+      "settings-hint",
+      "填自托管 anka-server 地址 → 手机/电脑/Agent 共用同一个库；留空 → 使用本机收藏。",
     ),
   );
   const cfg = remoteConfig();
@@ -313,21 +321,22 @@ function renderSettings() {
   panel.append(serverField.wrap, tokenField.wrap);
 
   if (!native()) {
-    panel.appendChild(el("h2", undefined, "从 AnkiWeb 导入"));
-    panel.appendChild(
+    const card = el("div", "subcard");
+    card.appendChild(el("h2", undefined, "② 一次性迁移：从 AnkiWeb 导入"));
+    card.appendChild(
       el(
         "p",
         "settings-hint",
-        "一次性全量拉取 AnkiWeb 收藏并导入当前库。密码仅用于本次登录，不会被保存。",
+        "把 AnkiWeb 云端的全部牌组一次性导进当前库。密码仅本次登录使用，不保存。这是个独立操作，和上面的连接设置无关。",
       ),
     );
     const awUser = fieldInput("AnkiWeb 邮箱", "");
     awUser.input.placeholder = "you@example.com";
     const awPass = fieldInput("AnkiWeb 密码", "");
     (awPass.input as HTMLInputElement).type = "password";
-    panel.append(awUser.wrap, awPass.wrap);
+    card.append(awUser.wrap, awPass.wrap);
     const awActions = el("div", "form-actions");
-    const awBtn = el("button", "reveal", "开始导入");
+    const awBtn = el("button", "reveal", "导入到当前库");
     awBtn.onclick = async () => {
       const user = awUser.input.value.trim();
       const pass = awPass.input.value;
@@ -363,7 +372,8 @@ function renderSettings() {
       }
     };
     awActions.appendChild(awBtn);
-    panel.appendChild(awActions);
+    card.appendChild(awActions);
+    panel.appendChild(card);
   }
 
   const actions = el("div", "form-actions");
