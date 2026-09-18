@@ -428,15 +428,13 @@ function renderError(message: string) {
     void boot();
   });
   actions.appendChild(retry);
-  if (isTauri() || useRemote()) {
-    const settings = el("button", "reveal", "⚙ 连接设置");
-    settings.addEventListener("click", () => {
-      error = null;
-      mode = "settings";
-      render();
-    });
-    actions.appendChild(settings);
-  }
+  const settings = el("button", "reveal", "⚙ 连接设置");
+  settings.addEventListener("click", () => {
+    error = null;
+    mode = "settings";
+    render();
+  });
+  actions.appendChild(settings);
   wrap.appendChild(actions);
   return wrap;
 }
