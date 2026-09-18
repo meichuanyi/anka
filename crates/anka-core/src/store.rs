@@ -250,7 +250,7 @@ impl<'c> Store<'c> {
         let sql = r#"
             SELECT d.id, d.name,
               SUM(CASE WHEN c.reps = 0 THEN 1 ELSE 0 END) as new_count,
-              SUM(CASE WHEN c.reps > 0 AND c.stability < 1.0 THEN 1 ELSE 0 END) as learning_count,
+              SUM(CASE WHEN c.reps > 0 AND c.stability < 1.0 AND c.due_at <= ?1 THEN 1 ELSE 0 END) as learning_count,
               SUM(CASE WHEN c.reps > 0 AND c.stability >= 1.0 AND c.due_at <= ?1 THEN 1 ELSE 0 END) as review_due
             FROM decks d
             LEFT JOIN cards c ON c.deck_id = d.id
