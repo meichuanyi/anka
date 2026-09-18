@@ -31,7 +31,7 @@ Success check: an MCP client can build a deck from a pasted outline and review i
 - [x] Design system pass (dark void + paper card)
 - [x] Media playback/render (HTTP `/media` + sound button + autoplay on card)
 - [x] Card templates: Recite / Spelling / Dictation front-back
-- [x] Mobile single-file app (`E:\projects\nas\index.html`)
+- [x] Mobile single-file app (`NAS single-file build`)
 
 ## Remaining product gaps
 
