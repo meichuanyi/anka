@@ -166,6 +166,7 @@ dependencies = [
 name = "anka-serve"
 version = "0.1.0"
 dependencies = [
+ "anka-ankiweb",
  "anka-core",
  "anyhow",
  "axum",

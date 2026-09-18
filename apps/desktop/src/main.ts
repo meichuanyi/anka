@@ -312,6 +312,60 @@ function renderSettings() {
   const tokenField = fieldInput("Token（ANKA_SERVER_TOKEN）", cfg.token);
   panel.append(serverField.wrap, tokenField.wrap);
 
+  if (!native()) {
+    panel.appendChild(el("h2", undefined, "从 AnkiWeb 导入"));
+    panel.appendChild(
+      el(
+        "p",
+        "settings-hint",
+        "一次性全量拉取 AnkiWeb 收藏并导入当前库。密码仅用于本次登录，不会被保存。",
+      ),
+    );
+    const awUser = fieldInput("AnkiWeb 邮箱", "");
+    awUser.input.placeholder = "you@example.com";
+    const awPass = fieldInput("AnkiWeb 密码", "");
+    (awPass.input as HTMLInputElement).type = "password";
+    panel.append(awUser.wrap, awPass.wrap);
+    const awActions = el("div", "form-actions");
+    const awBtn = el("button", "reveal", "开始导入");
+    awBtn.onclick = async () => {
+      const user = awUser.input.value.trim();
+      const pass = awPass.input.value;
+      if (!user || !pass) {
+        error = "请填写 AnkiWeb 邮箱和密码";
+        render();
+        return;
+      }
+      loading = true;
+      error = null;
+      render();
+      try {
+        const res = await apiFetch("/api/ankiweb/import", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ user, password: pass }),
+        });
+        const text = await res.text();
+        let r: { decks?: number; notes?: number; cards?: number };
+        try {
+          r = JSON.parse(text);
+        } catch {
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        if (typeof r.cards !== "number") throw new Error(text);
+        flash = `导入完成：牌组 ${r.decks} · 笔记 ${r.notes} · 卡片 ${r.cards}`;
+        loading = false;
+        await refreshDecks();
+      } catch (e) {
+        loading = false;
+        error = e instanceof Error ? e.message : String(e);
+        render();
+      }
+    };
+    awActions.appendChild(awBtn);
+    panel.appendChild(awActions);
+  }
+
   const actions = el("div", "form-actions");
   const save = el("button", "reveal", "保存并连接");
   save.onclick = () => {

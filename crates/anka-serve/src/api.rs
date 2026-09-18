@@ -31,6 +31,41 @@ fn lock_col_mut(
     lock_col(state)
 }
 
+
+#[derive(Deserialize)]
+struct AnkiwebImportReq {
+    user: String,
+    password: String,
+}
+
+/// One-time full import from AnkiWeb into this collection.
+/// The password is used in-memory for a single login call and never stored.
+async fn ankiweb_import(
+    State(state): State<Shared>,
+    Json(req): Json<AnkiwebImportReq>,
+) -> Result<Json<serde_json::Value>, String> {
+    let state = state.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        let hkey = anka_ankiweb::login(&req.user, &req.password)?;
+        let data = anka_ankiweb::full_download(&hkey)?;
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("collection lock poisoned"))?;
+        anka_ankiweb::import_into_collection(&data, &mut col)
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(Json(serde_json::json!({
+        "decks": report.decks,
+        "notes": report.notes,
+        "cards": report.cards,
+        "revlogs": report.revlogs,
+        "mediaCopied": report.media_copied,
+    })))
+}
+
 pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/api/health", get(health))
@@ -39,6 +74,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/grade", post(grade_card))
         .route("/api/notes", get(search_notes).post(create_note))
         .route("/api/notes/{id}", get(get_note).put(update_note))
+        .route("/api/ankiweb/import", post(ankiweb_import))
         .with_state(state)
 }
 
