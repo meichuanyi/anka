@@ -170,18 +170,20 @@ fn main() -> Result<()> {
             out,
         } => {
             println!("login {user} @ AnkiWeb ...");
-            let hkey = anka_ankiweb::login(&user, &password)?;
+            let mut c = anka_ankiweb::AnkiWebClient::new()?;
+            c.login(&user, &password)?;
             println!("download full collection ...");
-            let data = anka_ankiweb::full_download(&hkey)?;
+            let data = c.full_download()?;
             std::fs::write(&out, &data)?;
             println!("saved {} ({} bytes)", out.display(), data.len());
         }
         Commands::AnkiwebImport { user, password } => {
             let mut col = Collection::open_or_create(&path)?;
             println!("login {user} @ AnkiWeb ...");
-            let hkey = anka_ankiweb::login(&user, &password)?;
+            let mut c = anka_ankiweb::AnkiWebClient::new()?;
+            c.login(&user, &password)?;
             println!("download full collection ...");
-            let data = anka_ankiweb::full_download(&hkey)?;
+            let data = c.full_download()?;
             println!("downloaded {} bytes, importing ...", data.len());
             let report = anka_ankiweb::import_into_collection(&data, &mut col)?;
             println!(

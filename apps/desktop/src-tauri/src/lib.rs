@@ -280,8 +280,10 @@ fn ankiweb_import(
     user: String,
     password: String,
 ) -> Result<serde_json::Value, String> {
-    let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
-    let data = anka_ankiweb::full_download(&hkey).map_err(|e| e.to_string())?;
+    let mut client =
+        anka_ankiweb::AnkiWebClient::new().map_err(|e| e.to_string())?;
+    client.login(&user, &password).map_err(|e| e.to_string())?;
+    let data = client.full_download().map_err(|e| e.to_string())?;
     let mut col = state
         .collection
         .lock()

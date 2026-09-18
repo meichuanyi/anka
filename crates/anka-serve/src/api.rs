@@ -46,8 +46,9 @@ async fn ankiweb_import(
 ) -> Result<Json<serde_json::Value>, String> {
     let state = state.clone();
     let report = tokio::task::spawn_blocking(move || {
-        let hkey = anka_ankiweb::login(&req.user, &req.password)?;
-        let data = anka_ankiweb::full_download(&hkey)?;
+        let mut client = anka_ankiweb::AnkiWebClient::new()?;
+        client.login(&req.user, &req.password)?;
+        let data = client.full_download()?;
         let mut col = state
             .collection
             .lock()
