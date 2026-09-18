@@ -136,6 +136,7 @@ dependencies = [
 name = "anka-desktop"
 version = "0.1.0"
 dependencies = [
+ "anka-ankiweb",
  "anka-core",
  "chrono",
  "serde",

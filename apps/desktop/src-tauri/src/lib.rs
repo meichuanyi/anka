@@ -274,6 +274,29 @@ fn note_dto(col: &Collection, note: anka_core::Note) -> Result<NoteDto, String> 
     })
 }
 
+#[tauri::command]
+fn ankiweb_import(
+    state: State<'_, AppState>,
+    user: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
+    let data = anka_ankiweb::full_download(&hkey).map_err(|e| e.to_string())?;
+    let mut col = state
+        .collection
+        .lock()
+        .map_err(|_| "collection lock poisoned".to_string())?;
+    let report = anka_ankiweb::import_into_collection(&data, &mut col)
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "decks": report.decks,
+        "notes": report.notes,
+        "cards": report.cards,
+        "revlogs": report.revlogs,
+        "mediaCopied": report.media_copied,
+    }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -313,7 +336,8 @@ pub fn run() {
             create_note,
             update_note,
             get_note,
-            search_notes
+            search_notes,
+            ankiweb_import
         ])
         .run(tauri::generate_context!())
         .expect("error while running Anka desktop");

@@ -323,14 +323,16 @@ function renderSettings() {
   );
   panel.append(serverField.wrap, tokenField.wrap);
 
-  if (!native()) {
+  {
     const card = el("div", "subcard");
-    card.appendChild(el("h2", undefined, "② 一次性迁移：从 AnkiWeb 导入"));
+    card.appendChild(el("h2", undefined, "从 AnkiWeb 导入"));
     card.appendChild(
       el(
         "p",
         "settings-hint",
-        "把 AnkiWeb 云端的全部牌组一次性导进当前库。AnkiWeb 密码仅本次登录使用，不保存。前提：上方「① 数据来源」已保存并连接成功（导入动作通过它执行）。",
+        native()
+          ? "全量拉取 AnkiWeb 收藏，直接导入本机收藏（设备直连 AnkiWeb，不需要服务器，密码不保存）。"
+          : "全量拉取 AnkiWeb 收藏，导入当前连接的库。AnkiWeb 密码仅本次登录使用，不保存。",
       ),
     );
     const awUser = fieldInput("AnkiWeb 邮箱", "");
@@ -339,7 +341,7 @@ function renderSettings() {
     (awPass.input as HTMLInputElement).type = "password";
     card.append(awUser.wrap, awPass.wrap);
     const awActions = el("div", "form-actions");
-    const awBtn = el("button", "reveal", "导入到当前库");
+    const awBtn = el("button", "reveal", native() ? "导入到本机收藏" : "导入到当前库");
     awBtn.onclick = async () => {
       const user = awUser.input.value.trim();
       const pass = awPass.input.value;
@@ -352,26 +354,31 @@ function renderSettings() {
       error = null;
       render();
       try {
-        const res = await apiFetch("/api/ankiweb/import", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ user, password: pass }),
-        });
-        const text = await res.text();
         let r: { decks?: number; notes?: number; cards?: number };
-        try {
-          r = JSON.parse(text);
-        } catch {
-          throw new Error(text || `HTTP ${res.status}`);
+        if (native()) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          r = await invoke("ankiweb_import", { user, password: pass });
+        } else {
+          const res = await apiFetch("/api/ankiweb/import", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ user, password: pass }),
+          });
+          const text = await res.text();
+          try {
+            r = JSON.parse(text);
+          } catch {
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          if (typeof r.cards !== "number") throw new Error(text);
         }
-        if (typeof r.cards !== "number") throw new Error(text);
         flash = `导入完成：牌组 ${r.decks} · 笔记 ${r.notes} · 卡片 ${r.cards}`;
         loading = false;
         await refreshDecks();
       } catch (e) {
         loading = false;
         const msg = e instanceof Error ? e.message : String(e);
-        error = msg.includes("Token")
+        error = !native() && msg.includes("Token")
           ? "先完成上方「① 数据来源」的连接保存（需要服务器的访问令牌，不是 AnkiWeb 密码），AnkiWeb 导入是通过它执行的"
           : msg;
         render();
