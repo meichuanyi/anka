@@ -316,8 +316,11 @@ function renderSettings() {
   );
   const cfg = remoteConfig();
   const serverField = fieldInput("服务器地址", cfg.base);
-  serverField.input.placeholder = "http://192.168.10.3:8787";
-  const tokenField = fieldInput("Token（ANKA_SERVER_TOKEN）", cfg.token);
+  serverField.input.placeholder = "http://192.168.6.100:8788";
+  const tokenField = fieldInput(
+    "访问令牌（服务器的 Token，不是 AnkiWeb 密码）",
+    cfg.token,
+  );
   panel.append(serverField.wrap, tokenField.wrap);
 
   if (!native()) {
@@ -327,7 +330,7 @@ function renderSettings() {
       el(
         "p",
         "settings-hint",
-        "把 AnkiWeb 云端的全部牌组一次性导进当前库。密码仅本次登录使用，不保存。这是个独立操作，和上面的连接设置无关。",
+        "把 AnkiWeb 云端的全部牌组一次性导进当前库。AnkiWeb 密码仅本次登录使用，不保存。前提：上方「① 数据来源」已保存并连接成功（导入动作通过它执行）。",
       ),
     );
     const awUser = fieldInput("AnkiWeb 邮箱", "");
@@ -367,7 +370,10 @@ function renderSettings() {
         await refreshDecks();
       } catch (e) {
         loading = false;
-        error = e instanceof Error ? e.message : String(e);
+        const msg = e instanceof Error ? e.message : String(e);
+        error = msg.includes("Token")
+          ? "先完成上方「① 数据来源」的连接保存（需要服务器的访问令牌，不是 AnkiWeb 密码），AnkiWeb 导入是通过它执行的"
+          : msg;
         render();
       }
     };
