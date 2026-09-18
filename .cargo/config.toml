@@ -1,0 +1,3 @@
+# Anki 官方引擎（rslib）的 protobuf 代码生成需要 protoc
+[env]
+PROTOC = "/usr/bin/protoc"

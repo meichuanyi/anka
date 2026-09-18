@@ -1,0 +1,20 @@
+[package]
+name = "anka-sync-agent"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Anka's AnkiWeb two-way sync agent, powered by the official Anki engine"
+
+# Standalone crate (excluded from the anka workspace): the official engine pins
+# some deps exactly (unicase =2.6.0) and must not unify with the app's graph.
+
+[dependencies]
+anki = { git = "https://github.com/meichuanyi/anki.git", branch = "main" }
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["full"] }
+
+[[bin]]
+name = "anka-sync-agent"
+path = "src/main.rs"
