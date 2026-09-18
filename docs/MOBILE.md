@@ -50,11 +50,18 @@ npx tauri android build --apk --debug --target aarch64
 
 ### Release 签名
 
+本项目实际使用的流程（keystore 不入库，放在构建机 `~/anka-release.keystore`）：
+
 ```bash
-keytool -genkeypair -v -keystore anka.keystore -alias anka \
+keytool -genkeypair -v -keystore ~/anka-release.keystore -alias anka \
   -keyalg RSA -keysize 2048 -validity 10000
-# 在 gen/android/keystore.properties 或按 Tauri 文档配置 signingConfig 后:
-npx tauri android build --apk --target aarch64
+
+npx tauri android build --apk --target aarch64   # 产出 unsigned APK
+BT=$ANDROID_HOME/build-tools/34.0.0
+$BT/zipalign -f 4 app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk /tmp/anka-aligned.apk
+$BT/apksigner sign --ks ~/anka-release.keystore --ks-key-alias anka \
+  --ks-pass pass:*** --key-pass pass:*** --out anka-mobile-vX.Y.Z.apk /tmp/anka-aligned.apk
+$BT/apksigner verify anka-mobile-vX.Y.Z.apk
 ```
 
 ## iOS 构建（需要 macOS + Xcode）
