@@ -300,168 +300,201 @@ function renderTop() {
 function renderSettings() {
   const panel = el("div", "form-panel");
   panel.appendChild(el("h1", undefined, "设置"));
-  panel.appendChild(
-    el(
-      "p",
-      "settings-hint",
-      "① AnkiWeb 账号登录 = 无服务器多端同步（推荐）。② 连接自建服务器 = 进阶选项。",
-    ),
-  );
-  panel.appendChild(el("h2", undefined, "② 高级：连接自建服务器"));
-  panel.appendChild(
-    el(
-      "p",
-      "settings-hint",
-      "填自托管 anka-server 地址 → 手机/电脑/Agent 共用同一个库；留空 → 使用本机收藏。",
-    ),
-  );
-  const cfg = remoteConfig();
-  const serverField = fieldInput("服务器地址", cfg.base);
-  serverField.input.placeholder = "http://192.168.6.100:8788";
-  const tokenField = fieldInput(
-    "访问令牌（服务器的 Token，不是 AnkiWeb 密码）",
-    cfg.token,
-  );
-  panel.append(serverField.wrap, tokenField.wrap);
 
-  {
-    const card = el("div", "subcard");
-    card.appendChild(el("h2", undefined, "① AnkiWeb 账号"));
-    const aw = (() => {
-      try { return JSON.parse(localStorage.getItem("anka.aw") || "{}"); } catch { return {}; }
-    })();
-    if (aw.hkey) {
-      card.appendChild(
-        el("p", "settings-hint", `已登录：${aw.email || "AnkiWeb"}（已保存会话凭证，密码不保留）`),
-      );
-      const a1 = el("div", "form-actions");
-      const syncBtn = el("button", "reveal", "双向同步");
-      syncBtn.onclick = async () => {
-        loading = true; error = null; render();
-        try {
-          let r: { notesCreated?: number; notesUpdated?: number; cards?: number; schedUpdated?: number };
-          if (native()) {
-            const { invoke } = await import("@tauri-apps/api/core");
-            r = await invoke("ankiweb_sync", { hkey: aw.hkey });
-          } else {
-            const res = await apiFetch("/api/ankiweb/sync", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ hkey: aw.hkey }),
-            });
-            const text = await res.text();
-            try { r = JSON.parse(text); } catch { throw new Error(text || `HTTP ${res.status}`); }
-          }
-          flash = `同步完成：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0} · 卡片 ${r.cards ?? 0} · 调度 ${r.schedUpdated ?? 0}`;
-          loading = false;
-          await refreshDecks();
-        } catch (e) {
-          loading = false;
-          error = e instanceof Error ? e.message : String(e);
-          render();
-        }
+  // ---------- ① AnkiWeb 账号（主路径，两种模式都可用） ----------
+  panel.appendChild(el("h2", undefined, "① AnkiWeb 账号"));
+  const aw = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("anka.aw") || "{}") as {
+        email?: string;
+        hkey?: string;
       };
-      const out = el("button", "nav-btn", "退出登录");
-      out.onclick = () => {
-        localStorage.removeItem("anka.aw");
-        render();
-      };
-      a1.append(syncBtn, out);
-      card.appendChild(a1);
-    } else {
-      card.appendChild(
-        el(
-          "p",
-          "settings-hint",
-          native()
-            ? "登录后全量导入 AnkiWeb 收藏到本机。密码仅登录用一次，之后凭会话同步，不保存。"
-            : "登录后全量拉取 AnkiWeb 收藏到当前库。密码仅登录用一次，之后凭会话同步，不保存。",
-        ),
-      );
-      const em = fieldInput("AnkiWeb 邮箱", "");
-      em.input.placeholder = "you@example.com";
-      const pw = fieldInput("AnkiWeb 密码", "");
-      (pw.input as HTMLInputElement).type = "password";
-      card.append(em.wrap, pw.wrap);
-      const a2 = el("div", "form-actions");
-      const loginBtn = el("button", "reveal", "登录 AnkiWeb 并同步");
-      loginBtn.onclick = async () => {
-        const user = em.input.value.trim();
-        const pass = pw.input.value;
-        if (!user || !pass) {
-          error = "请填写邮箱和密码";
-          render();
-          return;
-        }
-        loading = true; error = null; render();
-        try {
-          let hkey: string;
-          if (native()) {
-            const { invoke } = await import("@tauri-apps/api/core");
-            const loginRes = await invoke<{ hkey: string }>("ankiweb_login", { user, password: pass });
-            hkey = loginRes.hkey;
-            localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
-            await invoke("ankiweb_import", { user, password: pass });
-          } else {
-            const res = await apiFetch("/api/ankiweb/login", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ user, password: pass }),
-            });
-            const text = await res.text();
-            let j: { hkey?: string };
-            try { j = JSON.parse(text); } catch { throw new Error(text || `HTTP ${res.status}`); }
-            if (!j.hkey) throw new Error(text);
-            hkey = j.hkey;
-            localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
-            const r2 = await apiFetch("/api/ankiweb/sync", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ hkey }),
-            });
-            const t2 = await r2.text();
-            try { JSON.parse(t2); } catch { throw new Error(t2 || `HTTP ${r2.status}`); }
-          }
-          flash = "AnkiWeb 已登录并完成同步";
-          loading = false;
-          await refreshDecks();
-        } catch (e) {
-          loading = false;
-          error = e instanceof Error ? e.message : String(e);
-          render();
-        }
-      };
-      a2.appendChild(loginBtn);
-      card.appendChild(a2);
+    } catch {
+      return {};
     }
-    panel.appendChild(card);
+  })();
+  const card = el("div", "subcard");
+  if (aw.hkey) {
+    card.appendChild(
+      el(
+        "p",
+        "settings-hint",
+        `已登录：${aw.email || "AnkiWeb"}（已保存会话凭证，密码不保留）`,
+      ),
+    );
+    const a1 = el("div", "form-actions");
+    const syncBtn = el("button", "reveal", "双向同步");
+    syncBtn.onclick = async () => {
+      loading = true;
+      error = null;
+      render();
+      try {
+        let r: {
+          notesCreated?: number;
+          notesUpdated?: number;
+          cards?: number;
+          schedUpdated?: number;
+        };
+        if (native()) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          r = await invoke("ankiweb_sync", { hkey: aw.hkey });
+        } else {
+          const res = await apiFetch("/api/ankiweb/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ hkey: aw.hkey }),
+          });
+          const text = await res.text();
+          try {
+            r = JSON.parse(text);
+          } catch {
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+        }
+        flash = `同步完成：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0} · 卡片 ${r.cards ?? 0} · 调度 ${r.schedUpdated ?? 0}`;
+        loading = false;
+        await refreshDecks();
+      } catch (e) {
+        loading = false;
+        error = e instanceof Error ? e.message : String(e);
+        render();
+      }
+    };
+    const out = el("button", "nav-btn", "退出登录");
+    out.onclick = () => {
+      localStorage.removeItem("anka.aw");
+      render();
+    };
+    a1.append(syncBtn, out);
+    card.appendChild(a1);
+  } else {
+    card.appendChild(
+      el(
+        "p",
+        "settings-hint",
+        native()
+          ? "登录后全量导入 AnkiWeb 收藏到本机。密码仅登录用一次，之后凭会话同步，不保存。"
+          : "登录后全量拉取 AnkiWeb 收藏到当前库。密码仅登录用一次，不保存。",
+      ),
+    );
+    const em = fieldInput("AnkiWeb 邮箱", "");
+    em.input.placeholder = "you@example.com";
+    const pw = fieldInput("AnkiWeb 密码", "");
+    (pw.input as HTMLInputElement).type = "password";
+    card.append(em.wrap, pw.wrap);
+    const a2 = el("div", "form-actions");
+    const loginBtn = el("button", "reveal", "登录 AnkiWeb");
+    loginBtn.onclick = async () => {
+      const user = em.input.value.trim();
+      const pass = pw.input.value;
+      if (!user || !pass) {
+        error = "请填写邮箱和密码";
+        render();
+        return;
+      }
+      loading = true;
+      error = null;
+      render();
+      try {
+        let hkey: string;
+        if (native()) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const loginRes = await invoke<{ hkey: string }>("ankiweb_login", {
+            user,
+            password: pass,
+          });
+          hkey = loginRes.hkey;
+          localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
+          await invoke("ankiweb_import", { user, password: pass });
+        } else {
+          const res = await apiFetch("/api/ankiweb/login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ user, password: pass }),
+          });
+          const text = await res.text();
+          let j: { hkey?: string };
+          try {
+            j = JSON.parse(text);
+          } catch {
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          if (!j.hkey) throw new Error(text);
+          hkey = j.hkey;
+          localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
+          const r2 = await apiFetch("/api/ankiweb/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ hkey }),
+          });
+          const t2 = await r2.text();
+          try {
+            JSON.parse(t2);
+          } catch {
+            throw new Error(t2 || `HTTP ${r2.status}`);
+          }
+        }
+        flash = "AnkiWeb 已登录并完成同步";
+        loading = false;
+        await refreshDecks();
+      } catch (e) {
+        loading = false;
+        error = e instanceof Error ? e.message : String(e);
+        render();
+      }
+    };
+    a2.appendChild(loginBtn);
+    card.appendChild(a2);
+  }
+  panel.appendChild(card);
+
+  // ---------- ② 高级：连接自建服务器（仅本机模式有意义） ----------
+  if (native()) {
+    panel.appendChild(el("h2", undefined, "② 高级：连接自建服务器"));
+    panel.appendChild(
+      el(
+        "p",
+        "settings-hint",
+        "填自托管 anka-server 地址 → 手机/电脑/Agent 共用同一个库；留空 → 使用本机收藏。",
+      ),
+    );
+    const cfg = remoteConfig();
+    const serverField = fieldInput("服务器地址", cfg.base);
+    serverField.input.placeholder = "http://192.168.6.100:8788";
+    const tokenField = fieldInput(
+      "访问令牌（服务器的 Token，不是 AnkiWeb 密码）",
+      cfg.token,
+    );
+    panel.append(serverField.wrap, tokenField.wrap);
+
+    const actions = el("div", "form-actions");
+    const save = el("button", "reveal", "保存并连接");
+    save.onclick = () => {
+      const url = serverField.input.value.trim().replace(/\/+$/, "");
+      localStorage.setItem("anka.server", url);
+      localStorage.setItem("anka.token", tokenField.input.value.trim());
+      session = null;
+      mode = "home";
+      void refreshDecks();
+    };
+    const clear = el("button", "nav-btn", "断开（用本机收藏）");
+    clear.onclick = () => {
+      localStorage.removeItem("anka.server");
+      localStorage.removeItem("anka.token");
+      session = null;
+      mode = "home";
+      void refreshDecks();
+    };
+    actions.append(save, clear);
+    panel.appendChild(actions);
   }
 
-  const actions = el("div", "form-actions");
-  const save = el("button", "reveal", "保存并连接");
-  save.onclick = () => {
-    const url = serverField.input.value.trim().replace(/\/+$/, "");
-    localStorage.setItem("anka.server", url);
-    localStorage.setItem("anka.token", tokenField.input.value.trim());
-    session = null;
-    mode = "home";
-    void refreshDecks();
-  };
-  const clear = el("button", "nav-btn", "断开（用本机收藏）");
-  clear.onclick = () => {
-    localStorage.removeItem("anka.server");
-    localStorage.removeItem("anka.token");
-    session = null;
-    mode = "home";
-    void refreshDecks();
-  };
-  const cancel = el("button", "nav-btn", "← 返回");
-  cancel.onclick = () => {
+  const back = el("button", "nav-btn", "← 返回");
+  back.onclick = () => {
     mode = "home";
     render();
   };
-  actions.append(save, clear, cancel);
-  panel.appendChild(actions);
+  panel.appendChild(back);
   return panel;
 }
 
