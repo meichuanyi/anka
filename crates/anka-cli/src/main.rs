@@ -194,162 +194,22 @@ fn main() -> Result<()> {
                 .parent()
                 .context("collection has no parent")?
                 .join("sync-agent.anki2");
-            let batch_file = agent_path.with_extension("batch.json");
-            let map_file = agent_path.with_extension("map.json");
-            let run_agent = |args: &[&str]| -> Result<()> {
-                let status = std::process::Command::new(&agent_bin)
-                    .args(args)
-                    .status()
-                    .context("anka-sync-agent 未找到（先构建 crates/anka-sync-engine）")?;
-                if !status.success() {
-                    bail!("同步代理执行失败");
-                }
-                Ok(())
-            };
-
-            // 1. bootstrap: first run pulls AnkiWeb down to establish sync state
-            if !agent_path.exists() {
-                run_agent(&[
-                    "pull",
-                    "--agent",
-                    agent_path.to_string_lossy().as_ref(),
-                    "--user",
-                    &user,
-                    "--password",
-                    &password,
-                ])?;
-            }
-
-            // 2. merge AnkiWeb copy -> Anka (dedup by anki_id_map)
-            {
-                let mut col = Collection::open_or_create(&path)?;
-                let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)?;
-                println!(
-                    "merge down: created notes={} updated notes={} cards={}",
-                    report.notes, report.notes_updated, report.cards
-                );
-            }
-
-            // 3. push unmapped Anka notes into the agent collection
-            let mut batch: Vec<serde_json::Value> = Vec::new();
-            let mut pairs: Vec<(anka_core::Id, anka_core::Id)> = Vec::new();
-            {
-                let col = Collection::open_or_create(&path)?;
-                let mapped: std::collections::HashSet<String> =
-                    col.mapped_note_ids()?.into_iter().collect();
-                let all_notes = col.all_notes()?;
-                let all_cards = col.all_cards()?;
-                let decks_list = col.list_decks()?;
-                for note in &all_notes {
-                    let nid = note.id.to_string();
-                    if mapped.contains(&nid) {
-                        continue;
-                    }
-                    let deck_name = decks_list
-                        .iter()
-                        .find(|d| d.id == note.deck_id)
-                        .map(|d| d.name.clone())
-                        .unwrap_or_else(|| "Default".into());
-                    let first_card = all_cards
-                        .iter()
-                        .find(|c| c.note_id == note.id)
-                        .map(|c| c.id);
-                    let (front, back) = anka_core::front_back(&note.fields);
-                    batch.push(serde_json::json!({
-                        "deck": deck_name,
-                        "fields": [front, back],
-                        "tags": note.tags,
-                    }));
-                    if let Some(card_id) = first_card {
-                        pairs.push((note.id, card_id));
-                    }
-                }
-            }
-            if batch.is_empty() {
-                println!("nothing new to upload");
-            } else {
-                std::fs::write(&batch_file, serde_json::to_vec(&batch)?)?;
-                run_agent(&[
-                    "add-batch",
-                    "--agent",
-                    agent_path.to_string_lossy().as_ref(),
-                    "--file",
-                    batch_file.to_string_lossy().as_ref(),
-                    "--map-out",
-                    map_file.to_string_lossy().as_ref(),
-                ])?;
-                let mut col = Collection::open_or_create(&path)?;
-                if let Ok(map_raw) = std::fs::read_to_string(&map_file) {
-                    let entries: Vec<serde_json::Value> =
-                        serde_json::from_str(&map_raw).context("解析 map-out 失败")?;
-                    for entry in &entries {
-                        let idx = entry["index"].as_u64().unwrap_or(0) as usize;
-                        if let Some((note_id, card_id)) = pairs.get(idx) {
-                            if let Some(anki_note) = entry["noteId"].as_i64() {
-                                col.put_anki_id("note", &anki_note.to_string(), *note_id)?;
-                            }
-                            if let Some(anki_card) =
-                                entry["cardIds"].as_array().and_then(|a| a.first())
-                            {
-                                if let Some(c) = anki_card.as_i64() {
-                                    col.put_anki_id("card", &c.to_string(), *card_id)?;
-                                }
-                            }
-                        }
-                    }
-                    println!("upload: {} notes pushed", pairs.len());
-                }
-                let _ = std::fs::remove_file(&map_file);
-                let _ = std::fs::remove_file(&batch_file);
-
-                // 4. sync uploads the pushed notes to AnkiWeb
-                run_agent(&[
-                    "sync",
-                    "--agent",
-                    agent_path.to_string_lossy().as_ref(),
-                    "--user",
-                    &user,
-                    "--password",
-                    &password,
-                ])?;
-                println!("upload complete");
-            }
-
-            // 5. final merge: scheduling state first, then content
-            {
-                let mut col = Collection::open_or_create(&path)?;
-                let (sched_updated, sched_skipped) =
-                    anka_ankiweb::merge_scheduling_from_agent(&agent_path, &mut col)?;
-                println!(
-                    "scheduling: updated {} cards, skipped {} (no FSRS state)",
-                    sched_updated, sched_skipped
-                );
-                let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)?;
-                println!(
-                    "merge up: created notes={} updated notes={} cards={}",
-                    report.notes, report.notes_updated, report.cards
-                );
-                // media: copy any new files from the agent media dir
-                if let Some(agent_media) =
-                    agent_path.parent().map(|p| p.join("sync-agent.media"))
-                {
-                    if agent_media.is_dir() {
-                        let media_dir = anka_core::media_dir_for_collection(&path);
-                        std::fs::create_dir_all(&media_dir)?;
-                        let mut copied = 0u32;
-                        for entry in std::fs::read_dir(&agent_media)?.flatten() {
-                            let target = media_dir.join(entry.file_name());
-                            if !target.exists() {
-                                std::fs::copy(entry.path(), &target)?;
-                                copied += 1;
-                            }
-                        }
-                        if copied > 0 {
-                            println!("media: copied {} files", copied);
-                        }
-                    }
-                }
-            }
+            let media_dir = anka_core::media_dir_for_collection(&path);
+            let mut col = Collection::open_or_create(&path)?;
+            let hkey = anka_ankiweb::login(&user, &password)?;
+            let report = anka_ankiweb::pipeline::run_pipeline(
+                &agent_bin, &agent_path, &media_dir, &mut col, &hkey,
+            )?;
+            println!(
+                "pushed={} sched updated={} skipped={} notes=+{}/~{} cards={} media={}",
+                report.pushed,
+                report.sched_updated,
+                report.sched_skipped,
+                report.notes_created,
+                report.notes_updated,
+                report.cards,
+                report.media_copied
+            );
         }
         Commands::AnkiwebImport { user, password } => {
             let mut col = Collection::open_or_create(&path)?;

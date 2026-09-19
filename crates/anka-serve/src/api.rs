@@ -122,202 +122,37 @@ async fn ankiweb_sync(
     let media_dir = anka_core::media_dir_for_collection(&state.path);
 
     let result: Result<serde_json::Value, String> =
-        tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-        let run_agent = |args: &[&str]| -> Result<(), String> {
-            let output = std::process::Command::new(&agent_bin)
-                .args(args)
-                .output()
-                .map_err(|e| format!("anka-sync-agent 未找到: {e}"))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(if stderr.trim().is_empty() {
-                    "同步代理执行失败".to_string()
-                } else {
-                    stderr.trim().to_string()
-                });
-            }
-            Ok(())
-        };
-
-        // 1. bootstrap: first run pulls AnkiWeb into the agent collection
-        if !agent_path.exists() {
-            let mut pull_args = vec![
-                "pull".to_string(),
-                "--agent".to_string(),
-                agent_path.to_string_lossy().as_ref().to_string(),
-            ];
-            if let Some(hkey) = &req.hkey {
-                pull_args.push("--hkey".into());
-                pull_args.push(hkey.clone());
-            } else {
-                pull_args.push("--user".into());
-                pull_args.push(req.user.clone().unwrap_or_default());
-                pull_args.push("--password".into());
-                pull_args.push(req.password.clone().unwrap_or_default());
-            }
-            run_agent(&pull_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
-        }
-
-        // 2. merge AnkiWeb copy -> Anka (dedup by anki_id_map)
-        {
+        tokio::task::spawn_blocking(move || {
+            let hkey = match &req.hkey {
+                Some(k) => k.clone(),
+                None => anka_ankiweb::login(
+                    req.user.as_deref().ok_or("缺少 AnkiWeb 邮箱")?,
+                    req.password.as_deref().ok_or("缺少 AnkiWeb 密码")?,
+                )
+                .map_err(|e| e.to_string())?,
+            };
             let mut col = state
                 .collection
                 .lock()
                 .map_err(|_| "collection lock poisoned".to_string())?;
-            anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)
-                .map_err(|e| e.to_string())?;
-        }
-
-        // 3. push unmapped Anka notes into the agent collection
-        let mut batch: Vec<serde_json::Value> = Vec::new();
-        let mut pairs: Vec<(anka_core::Id, anka_core::Id)> = Vec::new();
-        {
-            let col = state.collection.lock().map_err(|_| "lock")?;
-            let mapped: std::collections::HashSet<String> = col
-                .mapped_note_ids()
-                .map_err(|e| e.to_string())?
-                .into_iter()
-                .collect();
-            let all_notes = col.all_notes().map_err(|e| e.to_string())?;
-            let all_cards = col.all_cards().map_err(|e| e.to_string())?;
-            let decks_list = col.list_decks().map_err(|e| e.to_string())?;
-            for note in &all_notes {
-                if mapped.contains(&note.id.to_string()) {
-                    continue;
-                }
-                let deck_name = decks_list
-                    .iter()
-                    .find(|d| d.id == note.deck_id)
-                    .map(|d| d.name.clone())
-                    .unwrap_or_else(|| "Default".into());
-                let first_card = all_cards
-                    .iter()
-                    .find(|c| c.note_id == note.id)
-                    .map(|c| c.id);
-                let (front, back) = anka_core::front_back(&note.fields);
-                batch.push(serde_json::json!({
-                    "deck": deck_name,
-                    "fields": [front, back],
-                    "tags": note.tags,
-                }));
-                if let Some(card_id) = first_card {
-                    pairs.push((note.id, card_id));
-                }
-            }
-        }
-        let batch_file = agent_path.with_extension("batch.json");
-        let map_file = agent_path.with_extension("map.json");
-        if !batch.is_empty() {
-            std::fs::write(
-                &batch_file,
-                serde_json::to_vec(&batch).map_err(|e| e.to_string())?,
+            let report = anka_ankiweb::pipeline::run_pipeline(
+                &agent_bin, &agent_path, &media_dir, &mut col, &hkey,
             )
             .map_err(|e| e.to_string())?;
-            run_agent(&[
-                "add-batch",
-                "--agent",
-                agent_path.to_string_lossy().as_ref(),
-                "--file",
-                batch_file.to_string_lossy().as_ref(),
-                "--map-out",
-                map_file.to_string_lossy().as_ref(),
-            ])?;
-        }
+            Ok(serde_json::json!({
+                "pushed": report.pushed,
+                "schedUpdated": report.sched_updated,
+                "schedSkipped": report.sched_skipped,
+                "notesCreated": report.notes_created,
+                "notesUpdated": report.notes_updated,
+                "cards": report.cards,
+                "mediaCopied": report.media_copied,
+            }))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
 
-        // 4. two-way sync with AnkiWeb (uploads pushed notes, pulls changes)
-        let mut sync_args = vec![
-            "sync".to_string(),
-            "--agent".to_string(),
-            agent_path.to_string_lossy().as_ref().to_string(),
-        ];
-        if let Some(hkey) = &req.hkey {
-            sync_args.push("--hkey".into());
-            sync_args.push(hkey.clone());
-        } else {
-            sync_args.push("--user".into());
-            sync_args.push(req.user.clone().unwrap_or_default());
-            sync_args.push("--password".into());
-            sync_args.push(req.password.clone().unwrap_or_default());
-        }
-        run_agent(&sync_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
-
-        // 5. record mappings for pushed notes
-        if !batch.is_empty() {
-            let map_raw = std::fs::read_to_string(&map_file)
-                .map_err(|e| format!("读取 map-out 失败: {e}"))?;
-            let entries: Vec<serde_json::Value> =
-                serde_json::from_str(&map_raw).map_err(|e| e.to_string())?;
-            let mut col = state.collection.lock().map_err(|_| "lock")?;
-            for entry in &entries {
-                let idx = entry["index"].as_u64().unwrap_or(0) as usize;
-                if let Some((note_id, card_id)) = pairs.get(idx) {
-                    if let Some(anki_note) = entry["noteId"].as_i64() {
-                        col.put_anki_id("note", &anki_note.to_string(), *note_id)
-                            .map_err(|e| e.to_string())?;
-                    }
-                    if let Some(anki_card) =
-                        entry["cardIds"].as_array().and_then(|a| a.first())
-                    {
-                        if let Some(c) = anki_card.as_i64() {
-                            col.put_anki_id("card", &c.to_string(), *card_id)
-                                .map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-            }
-        }
-        let _ = std::fs::remove_file(&batch_file);
-
-        // 6. scheduling state merge + final content merge + media copy
-        let (sched_updated, sched_skipped, notes_created, notes_updated, cards) = {
-            let mut col = state
-                .collection
-                .lock()
-                .map_err(|_| "collection lock poisoned".to_string())?;
-            let (su, sk) = anka_ankiweb::merge_scheduling_from_agent(&agent_path, &mut col)
-                .map_err(|e| e.to_string())?;
-            let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)
-                .map_err(|e| e.to_string())?;
-            (su, sk, report.notes, report.notes_updated, report.cards)
-        };
-
-        // media: copy any new files from the agent media dir
-        let mut media_copied = 0u32;
-        if let Some(agent_media) = agent_path.parent().map(|p| p.join("sync-agent.media")) {
-            if agent_media.is_dir() {
-                std::fs::create_dir_all(&media_dir).map_err(|e| e.to_string())?;
-                for entry in std::fs::read_dir(&agent_media)
-                    .map_err(|e| e.to_string())?
-                    .flatten()
-                {
-                    let target = media_dir.join(entry.file_name());
-                    if !target.exists() {
-                        std::fs::copy(entry.path(), &target).map_err(|e| e.to_string())?;
-                        media_copied += 1;
-                    }
-                }
-            }
-        }
-
-        Ok(serde_json::json!({
-            "notesCreated": notes_created,
-            "notesUpdated": notes_updated,
-            "cards": cards,
-            "mediaCopied": media_copied,
-            "schedUpdated": sched_updated,
-            "schedSkipped": sched_skipped,
-        }))
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    match result {
-        Ok(value) => Ok(Json(value)),
-        Err(e) => {
-            // surface agent stderr details for AnkiWeb-side errors
-            Err(e)
-        }
-    }
+    Ok(Json(result?))
 }
 
 pub fn router(state: Shared) -> Router {
