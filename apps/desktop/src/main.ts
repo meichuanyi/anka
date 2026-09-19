@@ -174,6 +174,7 @@ let error: string | null = null;
 let selected = 0;
 let mode: Mode = "home";
 let browseQuery = "";
+let browseTotal = 0;
 let browseItems: NoteDto[] = [];
 let editNote: NoteDto | null = null;
 let flash: string | null = null;
@@ -264,7 +265,7 @@ function renderTop() {
       mode = "add";
       render();
     };
-    const browseBtn = el("button", "nav-btn", "浏览");
+    const browseBtn = el("button", "nav-btn", "全部卡组");
     browseBtn.onclick = () => {
       mode = "browse";
       void loadBrowse();
@@ -908,7 +909,8 @@ async function loadBrowse() {
   loading = true;
   render();
   try {
-    const res = await api.searchNotes(browseQuery, 30);
+    const res = await api.searchNotes(browseQuery, 200);
+    browseTotal = res.total;
     browseItems = res.items;
     error = null;
   } catch (e) {
@@ -921,7 +923,7 @@ async function loadBrowse() {
 
 function renderBrowse() {
   const panel = el("div", "form-panel");
-  panel.appendChild(el("h1", undefined, "浏览笔记"));
+  panel.appendChild(el("h1", undefined, "全部卡组"));
   const searchRow = el("div", "search-row");
   const q = document.createElement("input");
   q.type = "search";
@@ -942,26 +944,39 @@ function renderBrowse() {
   panel.appendChild(searchRow);
 
   if (!browseItems.length) {
-    panel.appendChild(el("p", "form-hint", "没有匹配的笔记，试试别的关键词。"));
+    panel.appendChild(
+      el("p", "form-hint", browseQuery ? "没有匹配的笔记，试试别的关键词。" : "还没有卡片：点 + 新建，或登录 AnkiWeb 导入。"),
+    );
     return panel;
   }
 
-  const list = el("div", "note-list");
+  panel.appendChild(el("p", "form-hint", `共 ${browseTotal} 条笔记，按牌组分组`));
+
+  const byDeck = new Map<string, NoteDto[]>();
   for (const n of browseItems) {
-    const row = el("div", "note-row");
-    const main = el("div", "note-main");
-    main.appendChild(el("div", "note-front", n.front || n.fields[0] || ""));
-    main.appendChild(el("div", "note-back", n.back || n.fields[1] || ""));
-    const edit = el("button", "nav-btn", "编辑");
-    edit.onclick = () => {
-      editNote = n;
-      mode = "edit";
-      render();
-    };
-    row.append(main, edit);
-    list.appendChild(row);
+    const key = n.deckName || "默认牌组";
+    if (!byDeck.has(key)) byDeck.set(key, []);
+    byDeck.get(key)!.push(n);
   }
-  panel.appendChild(list);
+  for (const [deck, notes] of byDeck) {
+    panel.appendChild(el("h2", undefined, `${deck}（${notes.length}）`));
+    const list = el("div", "note-list");
+    for (const n of notes) {
+      const row = el("div", "note-row");
+      const main = el("div", "note-main");
+      main.appendChild(el("div", "note-front", n.front || n.fields[0] || ""));
+      main.appendChild(el("div", "note-back", n.back || n.fields[1] || ""));
+      const edit = el("button", "nav-btn", "编辑");
+      edit.onclick = () => {
+        editNote = n;
+        mode = "edit";
+        render();
+      };
+      row.append(main, edit);
+      list.appendChild(row);
+    }
+    panel.appendChild(list);
+  }
   return panel;
 }
 
