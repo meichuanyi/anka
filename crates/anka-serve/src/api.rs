@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use anyhow::Context as _;
 use anka_core::{
     extract_sounds, front_back_for_template, strip_html, CardTemplate, Collection, Id, Rating,
 };
@@ -34,8 +35,10 @@ fn lock_col_mut(
 
 #[derive(Deserialize)]
 struct AnkiwebImportReq {
-    user: String,
-    password: String,
+    /// Preferred: session hkey from /api/ankiweb/login
+    hkey: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
 }
 
 /// One-time full import from AnkiWeb into this collection.
@@ -46,9 +49,13 @@ async fn ankiweb_import(
 ) -> Result<Json<serde_json::Value>, String> {
     let state = state.clone();
     let report = tokio::task::spawn_blocking(move || {
-        let mut client = anka_ankiweb::AnkiWebClient::new()?;
-        client.login(&req.user, &req.password)?;
-        let data = client.full_download()?;
+        let data = match &req.hkey {
+            Some(hkey) => anka_ankiweb::full_download_with_hkey(hkey)?,
+            None => anka_ankiweb::pull(
+                req.user.as_deref().context("缺少 AnkiWeb 邮箱")?,
+                req.password.as_deref().context("缺少 AnkiWeb 密码")?,
+            )?,
+        };
         let mut col = state
             .collection
             .lock()
@@ -69,8 +76,30 @@ async fn ankiweb_import(
 
 #[derive(Deserialize)]
 struct AnkiwebSyncReq {
+    /// Preferred: session hkey from /api/ankiweb/login
+    hkey: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnkiwebLoginReq {
     user: String,
     password: String,
+}
+
+/// Login to AnkiWeb once; returns the long-lived session hkey.
+/// The password is used in-memory for this single call and never stored.
+async fn ankiweb_login(
+    Json(req): Json<AnkiwebLoginReq>,
+) -> Result<Json<serde_json::Value>, String> {
+    // blocking reqwest must not run on the async runtime
+    let hkey = tokio::task::spawn_blocking(move || {
+        anka_ankiweb::login(&req.user, &req.password).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(Json(serde_json::json!({ "hkey": hkey })))
 }
 
 /// Two-way sync: run the anka-sync-agent (official engine) against AnkiWeb,
@@ -107,15 +136,21 @@ async fn ankiweb_sync(
 
         // 1. bootstrap: first run pulls AnkiWeb into the agent collection
         if !agent_path.exists() {
-            run_agent(&[
-                "pull",
-                "--agent",
-                agent_path.to_string_lossy().as_ref(),
-                "--user",
-                &req.user,
-                "--password",
-                &req.password,
-            ])?;
+            let mut pull_args = vec![
+                "pull".to_string(),
+                "--agent".to_string(),
+                agent_path.to_string_lossy().as_ref().to_string(),
+            ];
+            if let Some(hkey) = &req.hkey {
+                pull_args.push("--hkey".into());
+                pull_args.push(hkey.clone());
+            } else {
+                pull_args.push("--user".into());
+                pull_args.push(req.user.clone().unwrap_or_default());
+                pull_args.push("--password".into());
+                pull_args.push(req.password.clone().unwrap_or_default());
+            }
+            run_agent(&pull_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
         }
 
         // 2. merge AnkiWeb copy -> Anka (dedup by anki_id_map)
@@ -185,15 +220,21 @@ async fn ankiweb_sync(
         }
 
         // 4. two-way sync with AnkiWeb (uploads pushed notes, pulls changes)
-        run_agent(&[
-            "sync",
-            "--agent",
-            agent_path.to_string_lossy().as_ref(),
-            "--user",
-            &req.user,
-            "--password",
-            &req.password,
-        ])?;
+        let mut sync_args = vec![
+            "sync".to_string(),
+            "--agent".to_string(),
+            agent_path.to_string_lossy().as_ref().to_string(),
+        ];
+        if let Some(hkey) = &req.hkey {
+            sync_args.push("--hkey".into());
+            sync_args.push(hkey.clone());
+        } else {
+            sync_args.push("--user".into());
+            sync_args.push(req.user.clone().unwrap_or_default());
+            sync_args.push("--password".into());
+            sync_args.push(req.password.clone().unwrap_or_default());
+        }
+        run_agent(&sync_args.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
 
         // 5. record mappings for pushed notes
         if !batch.is_empty() {
@@ -284,6 +325,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/notes/{id}", get(get_note).put(update_note))
         .route("/api/ankiweb/import", post(ankiweb_import))
         .route("/api/ankiweb/sync", post(ankiweb_sync))
+        .route("/api/ankiweb/login", post(ankiweb_login))
         .with_state(state)
 }
 

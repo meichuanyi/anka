@@ -275,6 +275,155 @@ fn note_dto(col: &Collection, note: anka_core::Note) -> Result<NoteDto, String> 
 }
 
 #[tauri::command]
+fn ankiweb_sync(state: State<'_, AppState>, hkey: String) -> Result<serde_json::Value, String> {
+    use std::path::PathBuf;
+    let agent_bin = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .map(|p| p.join("anka-sync-agent"))
+        .ok_or("no exe dir".to_string())?;
+    let agent_path = state
+        .path
+        .parent()
+        .map(|p| p.join("sync-agent.anki2"))
+        .ok_or("collection has no parent".to_string())?;
+    let run_agent = |args: &[&str]| -> Result<(), String> {
+        let status = std::process::Command::new(&agent_bin)
+            .args(args)
+            .status()
+            .map_err(|e| format!("需要 anka-sync-agent（随 App 分发）: {e}"))?;
+        if !status.success() {
+            return Err("同步代理执行失败".into());
+        }
+        Ok(())
+    };
+    let to_str = |p: &PathBuf| p.to_string_lossy().as_ref().to_string();
+
+    // 1. bootstrap
+    if !agent_path.exists() {
+        run_agent(&[
+            "pull",
+            "--agent",
+            &to_str(&agent_path),
+            "--hkey",
+            &hkey,
+        ])?;
+    }
+    // 2. merge down
+    {
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| "collection lock poisoned".to_string())?;
+        anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)
+            .map_err(|e| e.to_string())?;
+    }
+    // 3. push unmapped notes
+    let (batch, pairs) = {
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| "collection lock poisoned".to_string())?;
+        let mapped: std::collections::HashSet<String> =
+            col.mapped_note_ids().map_err(|e| e.to_string())?.into_iter().collect();
+        let all_notes = col.all_notes().map_err(|e| e.to_string())?;
+        let all_cards = col.all_cards().map_err(|e| e.to_string())?;
+        let decks_list = col.list_decks().map_err(|e| e.to_string())?;
+        let mut batch: Vec<serde_json::Value> = Vec::new();
+        let mut pairs: Vec<(anka_core::Id, anka_core::Id)> = Vec::new();
+        for note in &all_notes {
+            if mapped.contains(&note.id.to_string()) {
+                continue;
+            }
+            let deck_name = decks_list
+                .iter()
+                .find(|d| d.id == note.deck_id)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "Default".into());
+            let first_card = all_cards
+                .iter()
+                .find(|c| c.note_id == note.id)
+                .map(|c| c.id);
+            let (front, back) = anka_core::front_back(&note.fields);
+            batch.push(serde_json::json!({
+                "deck": deck_name, "fields": [front, back], "tags": note.tags,
+            }));
+            if let Some(card_id) = first_card {
+                pairs.push((note.id, card_id));
+            }
+        }
+        (batch, pairs)
+    };
+    let batch_file = agent_path.with_extension("batch.json");
+    let map_file = agent_path.with_extension("map.json");
+    if !batch.is_empty() {
+        std::fs::write(&batch_file, serde_json::to_vec(&batch).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        run_agent(&[
+            "add-batch",
+            "--agent",
+            &to_str(&agent_path),
+            "--file",
+            &to_str(&batch_file),
+            "--map-out",
+            &to_str(&map_file),
+        ])?;
+    }
+    // 4. two-way sync
+    run_agent(&["sync", "--agent", &to_str(&agent_path), "--hkey", &hkey])?;
+    // 5. record mappings
+    if !batch.is_empty() {
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| "collection lock poisoned".to_string())?;
+        if let Ok(map_raw) = std::fs::read_to_string(&map_file) {
+            if let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&map_raw) {
+                for entry in &entries {
+                    let idx = entry["index"].as_u64().unwrap_or(0) as usize;
+                    if let Some((note_id, card_id)) = pairs.get(idx) {
+                        if let Some(anki_note) = entry["noteId"].as_i64() {
+                            col.put_anki_id("note", &anki_note.to_string(), *note_id)
+                                .map_err(|e| e.to_string())?;
+                        }
+                        if let Some(anki_card) = entry["cardIds"].as_array().and_then(|a| a.first()) {
+                            if let Some(c) = anki_card.as_i64() {
+                                col.put_anki_id("card", &c.to_string(), *card_id)
+                                    .map_err(|e| e.to_string())?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&map_file);
+    let _ = std::fs::remove_file(&batch_file);
+    // 6. scheduling + final content merge
+    let (sched_updated, sched_skipped, notes_created, notes_updated, cards) = {
+        let mut col = state
+            .collection
+            .lock()
+            .map_err(|_| "collection lock poisoned".to_string())?;
+        let (su, sk) = anka_ankiweb::merge_scheduling_from_agent(&agent_path, &mut col)
+            .map_err(|e| e.to_string())?;
+        let report = anka_ankiweb::merge_agent_into_collection(&agent_path, &mut col)
+            .map_err(|e| e.to_string())?;
+        (su, sk, report.notes, report.notes_updated, report.cards)
+    };
+    Ok(serde_json::json!({
+        "schedUpdated": sched_updated, "schedSkipped": sched_skipped,
+        "notesCreated": notes_created, "notesUpdated": notes_updated, "cards": cards,
+    }))
+}
+
+#[tauri::command]
+fn ankiweb_login(user: String, password: String) -> Result<serde_json::Value, String> {
+    let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "hkey": hkey }))
+}
+
+#[tauri::command]
 fn ankiweb_import(
     state: State<'_, AppState>,
     user: String,
@@ -339,7 +488,9 @@ pub fn run() {
             update_note,
             get_note,
             search_notes,
-            ankiweb_import
+            ankiweb_import,
+            ankiweb_login,
+            ankiweb_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running Anka desktop");

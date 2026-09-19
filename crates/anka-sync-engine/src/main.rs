@@ -28,15 +28,30 @@ enum Command {
         #[arg(long)]
         map_out: PathBuf,
     },
+    /// Login to AnkiWeb and save the session hkey (password used once)
+    Login {
+        #[arg(long)]
+        user: String,
+        #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
+        password: String,
+        /// Where to write {"hkey": ...}
+        #[arg(long)]
+        hkey_out: PathBuf,
+    },
     /// Two-way incremental sync between the agent collection and AnkiWeb
     Sync {
         /// Path to the agent collection (.anki2), created if missing
         #[arg(long)]
         agent: PathBuf,
+        /// AnkiWeb email (omit if --hkey given)
         #[arg(long)]
-        user: String,
+        user: Option<String>,
+        /// AnkiWeb password (omit if --hkey given)
         #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
-        password: String,
+        password: Option<String>,
+        /// Session hkey from a previous login (preferred: no password needed)
+        #[arg(long)]
+        hkey: Option<String>,
         /// Optional JSON file of notes to add before syncing
         /// (array of {deck, fields[2], tags})
         #[arg(long)]
@@ -70,17 +85,43 @@ async fn main() -> Result<()> {
             std::fs::write(&map_out, serde_json::to_vec_pretty(&added)?)?;
             println!("added {} notes", added.len());
         }
+        Command::Login {
+            user,
+            password,
+            hkey_out,
+        } => {
+            let client = reqwest::Client::new();
+            let auth = anki::sync::login::sync_login(&user, &password, None, client)
+                .await
+                .context("AnkiWeb 登录失败")?;
+            std::fs::write(
+                &hkey_out,
+                serde_json::to_vec_pretty(&serde_json::json!({ "hkey": auth.hkey }))?,
+            )?;
+            println!("login ok, hkey saved");
+        }
         Command::Sync {
             agent,
             user,
             password,
+            hkey,
             ..
         } => {
-            println!("login {user} @ AnkiWeb ...");
             let client = reqwest::Client::new();
-            let auth = anki::sync::login::sync_login(&user, &password, None, client.clone())
-                .await
-                .context("AnkiWeb 登录失败")?;
+            let auth = match (hkey, user, password) {
+                (Some(k), _, _) => anki::sync::login::SyncAuth {
+                    hkey: k,
+                    endpoint: None,
+                    io_timeout_secs: None,
+                },
+                (None, Some(u), Some(p)) => {
+                    println!("login {u} @ AnkiWeb ...");
+                    anki::sync::login::sync_login(&u, &p, None, client.clone())
+                        .await
+                        .context("AnkiWeb 登录失败")?
+                }
+                _ => anyhow::bail!("需要 --hkey 或 --user/--password"),
+            };
             println!("two-way sync ...");
             let mut col = open_col(&agent)?;
             let _output = col.normal_sync(auth, client).await?;

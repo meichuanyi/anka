@@ -165,6 +165,13 @@ pub fn login(username: &str, password: &str) -> Result<String> {
     AnkiWebClient::new()?.login(username, password)
 }
 
+/// Convenience wrapper: full download with an existing hkey.
+pub fn full_download_with_hkey(hkey: &str) -> Result<Vec<u8>> {
+    let mut c = AnkiWebClient::new()?;
+    c.hkey = hkey.to_string();
+    c.full_download()
+}
+
 /// Convenience wrapper: login + full download in one session.
 pub fn pull(username: &str, password: &str) -> Result<Vec<u8>> {
     let mut c = AnkiWebClient::new()?;
