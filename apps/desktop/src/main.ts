@@ -133,6 +133,15 @@ const api = {
   },
 };
 
+/** Saved AnkiWeb login session (hkey, not the password). */
+function ankiwebSession(): { email?: string; hkey?: string } {
+  try {
+    return JSON.parse(localStorage.getItem("anka.aw") || "{}");
+  } catch {
+    return {};
+  }
+}
+
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -498,6 +507,42 @@ function renderSettings() {
   return panel;
 }
 
+
+/** Auto-sync to AnkiWeb after a review session finishes (if logged in). */
+function maybeAutoSync() {
+  const aw = ankiwebSession();
+  if (!aw.hkey) return;
+  void (async () => {
+    try {
+      if (native()) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const r = await invoke<{ notesCreated?: number; notesUpdated?: number }>(
+          "ankiweb_sync",
+          { hkey: aw.hkey },
+        );
+        flash = `已同步 AnkiWeb：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0}`;
+      } else {
+        const res = await apiFetch("/api/ankiweb/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ hkey: aw.hkey }),
+        });
+        const text = await res.text();
+        let r: { notesCreated?: number; notesUpdated?: number };
+        try {
+          r = JSON.parse(text);
+        } catch {
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        flash = `已同步 AnkiWeb：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0}`;
+      }
+    } catch {
+      /* background sync: stay silent on failure */
+    }
+    render();
+  })();
+}
+
 function renderKeys() {
   const keys = el("div", "footer-keys");
   if (mode === "session" && session && !session.revealed) {
@@ -813,6 +858,7 @@ async function grade(rating: number) {
     if (next) playSounds(next.sounds);
     else stopSounds();
     render();
+    if (session.index >= session.cards.length) void maybeAutoSync();
   } catch (e) {
     error = String(e);
     render();
