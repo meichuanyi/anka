@@ -65,9 +65,11 @@ enum Command {
         #[arg(long)]
         agent: PathBuf,
         #[arg(long)]
-        user: String,
+        user: Option<String>,
         #[arg(long, env = "ANKIWEB_PASSWORD", hide_env_values = true)]
-        password: String,
+        password: Option<String>,
+        #[arg(long)]
+        hkey: Option<String>,
     },
 }
 
@@ -127,16 +129,30 @@ async fn main() -> Result<()> {
             let _output = col.normal_sync(auth, client).await?;
             println!("sync complete");
         }
-        Command::Pull { agent, user, password } => {
-            println!("login {user} @ AnkiWeb ...");
-            let client = reqwest::Client::new();
-            let auth = anki::sync::login::sync_login(&user, &password, None, client.clone())
-                .await
-                .context("AnkiWeb 登录失败")?;
+        Command::Pull { agent, user, password, hkey } => {
+            let hkey = match hkey {
+                Some(k) => k,
+                _ => {
+                    let u = user.context("需要 --user")?;
+                    let p = password.context("需要 --password")?;
+                    println!("login {u} @ AnkiWeb ...");
+                    let client = reqwest::Client::new();
+                    let auth = anki::sync::login::sync_login(&u, &p, None, client)
+                        .await
+                        .context("AnkiWeb 登录失败")?;
+                    auth.hkey
+                }
+            };
             println!("full download into agent collection ...");
-            let col = open_col(&agent)?;
-            col.full_download(auth, client).await?;
-            println!("agent collection replaced with AnkiWeb copy");
+            let hk = hkey.clone();
+            let data = tokio::task::spawn_blocking(move || download_collection(&hk))
+                .await
+                .context("下载线程失败")??;
+            std::fs::write(&agent, &data)?;
+            // mark the collection as synced so subsequent normal_sync works
+            let conn = rusqlite::Connection::open(&agent)?;
+            conn.execute("UPDATE col SET ls = mod", [])?;
+            println!("agent collection replaced with AnkiWeb copy ({} bytes)", data.len());
         }
     }
     Ok(())
@@ -197,4 +213,51 @@ fn add_batch_notes(
         });
     }
     Ok(out)
+}
+
+/// Download the collection file from AnkiWeb (wire format from anka-ankiweb).
+fn download_collection(hkey: &str) -> Result<Vec<u8>> {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(600))
+        .build()?;
+    let header = serde_json::json!({
+        "v": 11, "k": hkey, "c": "anka-sync-agent,0.1.0", "s": "ankasync"
+    });
+    let body = zstd::stream::encode_all(b"{}".as_slice(), 0)?;
+    let mut url = "https://sync.ankiweb.net/sync/download".to_string();
+    let mut transient = 0u32;
+    loop {
+        let resp = client
+            .post(&url)
+            .header("anki-sync", header.to_string())
+            .header("content-type", "application/octet-stream")
+            .body(body.clone())
+            .send()?;
+        let status = resp.status();
+        if status.as_u16() == 403 {
+            anyhow::bail!("AnkiWeb 账号或密码错误（403）");
+        }
+        if status.is_redirection() {
+            match resp.headers().get("location") {
+                Some(loc) => {
+                    let loc = loc.to_str()?.to_string();
+                    url = if loc.starts_with("http") { loc } else { format!("https://sync.ankiweb.net/{loc}") };
+                }
+                None => {
+                    transient += 1;
+                    if transient > 6 {
+                        anyhow::bail!("AnkiWeb 持续限流，请几分钟后再试");
+                    }
+                    std::thread::sleep(Duration::from_millis(1000 * u64::from(transient)));
+                }
+            }
+            continue;
+        }
+        if !status.is_success() {
+            anyhow::bail!("AnkiWeb 返回 {status}");
+        }
+        return zstd::stream::decode_all(&resp.bytes()?[..]).context("解压下载响应失败");
+    }
 }

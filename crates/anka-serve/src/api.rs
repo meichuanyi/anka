@@ -124,12 +124,17 @@ async fn ankiweb_sync(
     let result: Result<serde_json::Value, String> =
         tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
         let run_agent = |args: &[&str]| -> Result<(), String> {
-            let status = std::process::Command::new(&agent_bin)
+            let output = std::process::Command::new(&agent_bin)
                 .args(args)
-                .status()
+                .output()
                 .map_err(|e| format!("anka-sync-agent 未找到: {e}"))?;
-            if !status.success() {
-                return Err("同步代理执行失败（详见服务端日志/上方提示）".to_string());
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(if stderr.trim().is_empty() {
+                    "同步代理执行失败".to_string()
+                } else {
+                    stderr.trim().to_string()
+                });
             }
             Ok(())
         };

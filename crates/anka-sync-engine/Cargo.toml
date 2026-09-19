@@ -13,7 +13,9 @@ anki = { git = "https://github.com/meichuanyi/anki.git", branch = "main" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+zstd = "0.13"
+rusqlite = { version = "0.36", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 
