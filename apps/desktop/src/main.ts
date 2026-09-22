@@ -580,9 +580,23 @@ async function checkForUpdate(): Promise<string> {
         { headers: { accept: "application/vnd.github+json" } },
       );
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-      const rel = (await res.json()) as { tag_name?: string; html_url?: string };
+      const rel = (await res.json()) as {
+        tag_name?: string;
+        html_url?: string;
+        assets?: { name: string; browser_download_url: string }[];
+      };
       const latest = (rel.tag_name || "").replace(/^v/, "");
       if (!latest || latest <= current) return "当前已是最新版本";
+      const apk = (rel.assets || []).find((a) => a.name.endsWith(".apk"));
+      if (apk) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("install_apk", { url: apk.browser_download_url });
+          return `新版本 v${latest} 下载完成，请在系统弹出的安装界面确认（首次使用需允许 Anka 安装应用）`;
+        } catch {
+          /* fall through to browser */
+        }
+      }
       const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(rel.html_url || "https://github.com/meichuanyi/anka/releases/latest");
       return `发现新版本 v${latest}，已打开下载页（下载 APK 后安装覆盖即可）`;

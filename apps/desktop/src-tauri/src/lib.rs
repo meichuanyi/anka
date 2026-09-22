@@ -310,6 +310,144 @@ fn ankiweb_sync(
 }
 
 #[tauri::command]
+fn install_apk(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let cache_dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("cache dir: {e}"))?;
+        std::thread::spawn(move || {
+            if let Err(e) = install_apk_android(&url, &cache_dir) {
+                eprintln!("[update] in-app install failed: {e}");
+            }
+        });
+        Ok(())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, url);
+        Err("此平台不支持应用内安装，请在对应应用商店或 Release 页更新".into())
+    }
+}
+
+/// Android: download the APK into the cache dir and bring up the system
+/// package installer via FileProvider + ACTION_VIEW (no browser involved).
+#[cfg(target_os = "android")]
+fn install_apk_android(url: &str, dir: &std::path::Path) -> Result<(), String> {
+    use jni::objects::{JClass, JObject, JValue};
+
+    let file = dir.join("anka-update.apk");
+    let mut resp = reqwest::blocking::get(url).map_err(|e| format!("下载失败: {e}"))?;
+    let mut out = std::fs::File::create(&file).map_err(|e| format!("写入失败: {e}"))?;
+    std::io::copy(&mut resp, &mut out).map_err(|e| format!("保存失败: {e}"))?;
+    drop(out);
+
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| format!("vm: {e}"))?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| format!("attach: {e}"))?;
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+    fn jstr<'e>(
+        env: &mut jni::JNIEnv<'e>,
+        s: &str,
+    ) -> Result<jni::objects::JString<'e>, String> {
+        env.new_string(s).map_err(|e| format!("new_string: {e}"))
+    }
+
+    let path = file.to_string_lossy().to_string();
+    let jpath = jstr(&mut env, &path)?;
+    let file_class = env
+        .find_class("java/io/File")
+        .map_err(|e| format!("File class: {e}"))?;
+    let jfile = env
+        .new_object(
+            &file_class,
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&jpath)],
+        )
+        .map_err(|e| format!("new File: {e}"))?;
+
+    // androidx classes need the app classloader, not the system one
+    let loader = env
+        .call_method(
+            &activity,
+            "getClassLoader",
+            "()Ljava/lang/ClassLoader;",
+            &[],
+        )
+        .map_err(|e| format!("classloader: {e}"))?
+        .l()
+        .map_err(|e| format!("classloader l: {e}"))?;
+    let jname = jstr(&mut env, "androidx.core.content.FileProvider")?;
+    let provider_class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&jname)],
+        )
+        .map_err(|e| format!("loadClass: {e}"))?
+        .l()
+        .map_err(|e| format!("loadClass l: {e}"))?;
+    let provider_class = JClass::from(provider_class);
+
+    let jauth = jstr(&mut env, "app.anka.desktop.fileprovider")?;
+    let uri = env
+        .call_static_method(
+            &provider_class,
+            "getUriForFile",
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&jauth),
+                JValue::Object(&jfile),
+            ],
+        )
+        .map_err(|e| format!("getUriForFile: {e}"))?
+        .l()
+        .map_err(|e| format!("uri l: {e}"))?;
+
+    let intent_class = env
+        .find_class("android/content/Intent")
+        .map_err(|e| format!("Intent class: {e}"))?;
+    let action = jstr(&mut env, "android.intent.action.VIEW")?;
+    let intent = env
+        .new_object(
+            &intent_class,
+            "(Ljava/lang/String;)V",
+            &[JValue::Object(&action)],
+        )
+        .map_err(|e| format!("new Intent: {e}"))?;
+    let mime = jstr(&mut env, "application/vnd.android.package-archive")?;
+    env.call_method(
+        &intent,
+        "setDataAndType",
+        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
+        &[JValue::Object(&uri), JValue::Object(&mime)],
+    )
+    .map_err(|e| format!("setDataAndType: {e}"))?;
+    const FLAG_GRANT_READ: i32 = 1;
+    const FLAG_NEW_TASK: i32 = 0x1000_0000;
+    env.call_method(
+        &intent,
+        "addFlags",
+        "(I)Landroid/content/Intent;",
+        &[JValue::Int(FLAG_GRANT_READ | FLAG_NEW_TASK)],
+    )
+    .map_err(|e| format!("addFlags: {e}"))?;
+    env.call_method(
+        &activity,
+        "startActivity",
+        "(Landroid/content/Intent;)V",
+        &[JValue::Object(&intent)],
+    )
+    .map_err(|e| format!("startActivity: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn ankiweb_login(user: String, password: String) -> Result<serde_json::Value, String> {
     let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "hkey": hkey }))
@@ -383,7 +521,8 @@ pub fn run() {
             search_notes,
             ankiweb_import,
             ankiweb_login,
-            ankiweb_sync
+            ankiweb_sync,
+            install_apk
         ])
         .run(tauri::generate_context!())
         .expect("error while running Anka desktop");
