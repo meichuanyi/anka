@@ -591,6 +591,18 @@ function maybeAutoSync() {
 }
 
 
+
+/** Numeric semver-ish compare: returns >0 if a is newer. */
+function cmpVersion(a: string, b: string): number {
+  const pa = a.replace(/^v/, "").split(".").map(Number);
+  const pb = b.replace(/^v/, "").split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 /** App version check + update. Desktop: Tauri updater (download+install).
  *  Mobile: compare against GitHub latest release, open the download page. */
 async function checkForUpdate(): Promise<string> {
@@ -610,7 +622,7 @@ async function checkForUpdate(): Promise<string> {
         assets?: { name: string; browser_download_url: string }[];
       };
       const latest = (rel.tag_name || "").replace(/^v/, "");
-      if (!latest || latest <= current) return "当前已是最新版本";
+      if (!latest || cmpVersion(latest, current) <= 0) return "当前已是最新版本";
       const apk = (rel.assets || []).find((a) => a.name.endsWith(".apk"));
       if (apk) {
         try {
