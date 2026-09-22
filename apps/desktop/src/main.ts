@@ -551,7 +551,21 @@ function renderSettings() {
     render();
   };
   panel.appendChild(back);
-  return panel;
+    const verLine = el("p", "version-line", "Anka");
+  if (isTauri()) {
+    void (async () => {
+      try {
+        const { getVersion } = await import("@tauri-apps/api/app");
+        verLine.textContent = `Anka v${await getVersion()}`;
+      } catch {
+        /* ignore */
+      }
+    })();
+  } else {
+    verLine.textContent = "Anka Web";
+  }
+  panel.appendChild(verLine);
+return panel;
 }
 
 

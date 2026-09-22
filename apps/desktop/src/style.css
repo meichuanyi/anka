@@ -629,3 +629,19 @@ button:not(:disabled):active {
   border-radius: 4px;
   transition: width 0.4s ease;
 }
+
+.version-line {
+  text-align: center;
+  color: var(--mist);
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-top: 18px;
+}
+
+.version-line {
+  text-align: center;
+  color: var(--mist);
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-top: 18px;
+}
