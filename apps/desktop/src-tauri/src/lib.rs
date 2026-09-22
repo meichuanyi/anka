@@ -344,6 +344,7 @@ fn ankiweb_import(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Desktop: ANKA_COLLECTION env or CWD (as before).
             // Mobile: no env/CWD — the collection lives in the app sandbox.

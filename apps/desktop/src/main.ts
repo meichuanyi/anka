@@ -498,6 +498,29 @@ function renderSettings() {
     panel.appendChild(actions);
   }
 
+  // ---------- 检查更新 ----------
+  const upd = el("div", "subcard");
+  upd.appendChild(el("h2", undefined, "检查更新"));
+  const updActions = el("div", "form-actions");
+  const updBtn = el("button", "reveal", "检查并更新");
+  updBtn.onclick = async () => {
+    loading = true;
+    error = null;
+    render();
+    try {
+      flash = await checkForUpdate();
+      loading = false;
+      render();
+    } catch (e) {
+      loading = false;
+      error = e instanceof Error ? e.message : String(e);
+      render();
+    }
+  };
+  updActions.appendChild(updBtn);
+  upd.appendChild(updActions);
+  panel.appendChild(upd);
+
   const back = el("button", "nav-btn", "← 返回");
   back.onclick = () => {
     mode = "home";
@@ -541,6 +564,42 @@ function maybeAutoSync() {
     }
     render();
   })();
+}
+
+
+/** App version check + update. Desktop: Tauri updater (download+install).
+ *  Mobile: compare against GitHub latest release, open the download page. */
+async function checkForUpdate(): Promise<string> {
+  if (isTauri()) {
+    const isMobile = /android|ios/i.test(navigator.userAgent);
+    const { getVersion } = await import("@tauri-apps/api/app");
+    const current = await getVersion();
+    if (isMobile) {
+      const res = await fetch(
+        "https://api.github.com/repos/meichuanyi/anka/releases/latest",
+        { headers: { accept: "application/vnd.github+json" } },
+      );
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const rel = (await res.json()) as { tag_name?: string; html_url?: string };
+      const latest = (rel.tag_name || "").replace(/^v/, "");
+      if (!latest || latest <= current) return "当前已是最新版本";
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(rel.html_url || "https://github.com/meichuanyi/anka/releases/latest");
+      return `发现新版本 v${latest}，已打开下载页（下载 APK 后安装覆盖即可）`;
+    }
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    if (!update) return "当前已是最新版本";
+    await update.downloadAndInstall();
+    return `已更新到 ${update.version}，重启应用后生效`;
+  }
+  const res = await fetch(
+    "https://api.github.com/repos/meichuanyi/anka/releases/latest",
+    { headers: { accept: "application/vnd.github+json" } },
+  );
+  if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+  const rel = (await res.json()) as { tag_name?: string; html_url?: string };
+  return `网页版始终使用服务器最新部署。桌面/手机最新版本：${rel.tag_name}（${rel.html_url}）`;
 }
 
 function renderKeys() {
