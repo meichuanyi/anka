@@ -49,6 +49,36 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+
+  # anka-mcp 独立二进制：远程设备的 MCP 桥接器
+  agent-mcp:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, ext: "" }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: ".exe" }
+          - { os: macos-latest, target: aarch64-apple-darwin, ext: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build anka-mcp
+        run: cargo build --release -p anka-mcp --target ${{ matrix.target }}
+      - name: Rename
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/anka-mcp${{ matrix.ext }} dist/anka-mcp-${{ matrix.target }}${{ matrix.ext }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anka-mcp-${{ matrix.target }}
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/anka-mcp-*
   # Android：构建可安装的 APK（debug 签名，可直接安装）
   android:
     runs-on: ubuntu-22.04
