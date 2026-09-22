@@ -9,7 +9,7 @@ use serde::Serialize;
 use tauri::{Manager, State};
 
 pub struct AppState {
-    pub collection: Mutex<Collection>,
+    pub collection: std::sync::Arc<Mutex<Collection>>,
     pub path: PathBuf,
 }
 
@@ -275,27 +275,36 @@ fn note_dto(col: &Collection, note: anka_core::Note) -> Result<NoteDto, String> 
 }
 
 #[tauri::command]
-fn ankiweb_sync(
+async fn ankiweb_sync(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     hkey: String,
 ) -> Result<serde_json::Value, String> {
+    let col = state.collection.clone();
+    let col_path = state.path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let emit = |pct: u8, msg: &str| {
+            let _ = app.emit(
+                "sync-progress",
+                serde_json::json!({ "pct": pct, "msg": msg }),
+            );
+        };
     let agent_bin = std::env::current_exe()
         .map_err(|e| e.to_string())?
         .parent()
         .map(|p| p.join("anka-sync-agent"))
         .ok_or("no exe dir".to_string())?;
-    let agent_path = state
-        .path
+    let agent_path = col_path
         .parent()
         .map(|p| p.join("sync-agent.anki2"))
         .ok_or("collection has no parent".to_string())?;
-    let media_dir = anka_core::media_dir_for_collection(&state.path);
-    let mut col = state
-        .collection
+    let media_dir = anka_core::media_dir_for_collection(&col_path);
+    let mut col = col
         .lock()
         .map_err(|_| "collection lock poisoned".to_string())?;
-    let report = anka_ankiweb::pipeline::run_pipeline(
-        &agent_bin, &agent_path, &media_dir, &mut col, &hkey,
+    let report = anka_ankiweb::pipeline::run_pipeline_with_progress(
+        &agent_bin, &agent_path, &media_dir, &mut col, &hkey, &emit,
     )
     .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
@@ -307,6 +316,9 @@ fn ankiweb_sync(
         "cards": report.cards,
         "mediaCopied": report.media_copied,
     }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -448,34 +460,53 @@ fn install_apk_android(url: &str, dir: &std::path::Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn ankiweb_login(user: String, password: String) -> Result<serde_json::Value, String> {
-    let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({ "hkey": hkey }))
+async fn ankiweb_login(user: String, password: String) -> Result<serde_json::Value, String> {
+    // blocking HTTP must stay off the main thread (freezes the UI otherwise)
+    tauri::async_runtime::spawn_blocking(move || {
+        let hkey = anka_ankiweb::login(&user, &password).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "hkey": hkey }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn ankiweb_import(
+async fn ankiweb_import(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     user: String,
     password: String,
 ) -> Result<serde_json::Value, String> {
-    let mut client =
-        anka_ankiweb::AnkiWebClient::new().map_err(|e| e.to_string())?;
-    client.login(&user, &password).map_err(|e| e.to_string())?;
-    let data = client.full_download().map_err(|e| e.to_string())?;
-    let mut col = state
-        .collection
-        .lock()
-        .map_err(|_| "collection lock poisoned".to_string())?;
-    let report = anka_ankiweb::import_into_collection(&data, &mut col)
-        .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "decks": report.decks,
-        "notes": report.notes,
-        "cards": report.cards,
-        "revlogs": report.revlogs,
-        "mediaCopied": report.media_copied,
-    }))
+    let col = state.collection.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let emit = |pct: u8, msg: &str| {
+            let _ = app.emit(
+                "sync-progress",
+                serde_json::json!({ "pct": pct, "msg": msg }),
+            );
+        };
+        emit(10, "登录 AnkiWeb…");
+        let mut client = anka_ankiweb::AnkiWebClient::new().map_err(|e| e.to_string())?;
+        client.login(&user, &password).map_err(|e| e.to_string())?;
+        emit(50, "下载 AnkiWeb 收藏…");
+        let data = client.full_download().map_err(|e| e.to_string())?;
+        emit(80, "导入本机收藏…");
+        let mut col = col
+            .lock()
+            .map_err(|_| "collection lock poisoned".to_string())?;
+        let report = anka_ankiweb::import_into_collection(&data, &mut col)
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "decks": report.decks,
+            "notes": report.notes,
+            "cards": report.cards,
+            "revlogs": report.revlogs,
+            "mediaCopied": report.media_copied,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -506,7 +537,7 @@ pub fn run() {
                 .unwrap_or_else(|e| panic!("无法打开收藏 {}: {e}", path.display()));
 
             app.manage(AppState {
-                collection: Mutex::new(collection),
+                collection: std::sync::Arc::new(Mutex::new(collection)),
                 path,
             });
             Ok(())

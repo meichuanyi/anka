@@ -179,6 +179,19 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 let decks: DeckCounts[] = [];
 let session: Session | null = null;
 let loading = false;
+let loadingMsg = "正在读取收藏…";
+let syncPct: number | null = null;
+
+if (isTauri()) {
+  void (async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen<{ pct: number; msg: string }>("sync-progress", (e) => {
+      syncPct = e.payload.pct;
+      loadingMsg = e.payload.msg;
+      if (loading) render();
+    });
+  })();
+}
 let error: string | null = null;
 let selected = 0;
 let mode: Mode = "home";
@@ -334,6 +347,7 @@ function renderSettings() {
     const a1 = el("div", "form-actions");
     const syncBtn = el("button", "reveal", "双向同步");
     syncBtn.onclick = async () => {
+      loadingMsg = "正在与 AnkiWeb 同步…";
       loading = true;
       error = null;
       render();
@@ -361,6 +375,8 @@ function renderSettings() {
           }
         }
         flash = `同步完成：新增 ${r.notesCreated ?? 0} · 更新 ${r.notesUpdated ?? 0} · 卡片 ${r.cards ?? 0} · 调度 ${r.schedUpdated ?? 0}`;
+        syncPct = null;
+        loadingMsg = "正在读取收藏…";
         loading = false;
         await refreshDecks();
       } catch (e) {
@@ -401,6 +417,7 @@ function renderSettings() {
         render();
         return;
       }
+      loadingMsg = "正在登录 AnkiWeb…";
       loading = true;
       error = null;
       render();
@@ -414,6 +431,8 @@ function renderSettings() {
           });
           hkey = loginRes.hkey;
           localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
+          loadingMsg = "正在从 AnkiWeb 下载收藏（首次约需 1-2 分钟）…";
+          render();
           await invoke("ankiweb_import", { user, password: pass });
         } else {
           const res = await apiFetch("/api/ankiweb/login", {
@@ -431,6 +450,8 @@ function renderSettings() {
           if (!j.hkey) throw new Error(text);
           hkey = j.hkey;
           localStorage.setItem("anka.aw", JSON.stringify({ email: user, hkey }));
+          loadingMsg = "正在与 AnkiWeb 双向同步（首次约需 1-2 分钟）…";
+          render();
           const r2 = await apiFetch("/api/ankiweb/sync", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -444,6 +465,9 @@ function renderSettings() {
           }
         }
         flash = "AnkiWeb 已登录并完成同步";
+        syncPct = null;
+        syncPct = null;
+        loadingMsg = "正在读取收藏…";
         loading = false;
         await refreshDecks();
       } catch (e) {
@@ -635,7 +659,15 @@ function renderKeys() {
 function renderLoading() {
   const wrap = el("div", "empty");
   wrap.appendChild(el("h2", undefined, "加载中"));
-  wrap.appendChild(el("p", undefined, "正在读取收藏…"));
+  wrap.appendChild(el("p", undefined, loadingMsg));
+  if (syncPct !== null) {
+    const track = el("div", "progress-track");
+    const bar = el("div", "progress-bar");
+    bar.style.width = `${Math.min(100, Math.max(0, syncPct))}%`;
+    track.appendChild(bar);
+    wrap.appendChild(track);
+    wrap.appendChild(el("p", undefined, `${syncPct}%`));
+  }
   return wrap;
 }
 
