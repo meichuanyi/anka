@@ -481,8 +481,8 @@ function renderSettings() {
   }
   panel.appendChild(card);
 
-  // ---------- ② 高级：连接自建服务器（仅本机模式有意义） ----------
-  if (native()) {
+  // ---------- ② 高级：连接自建服务器（Tauri 端显示；网页端自身就在服务器上） ----------
+  if (isTauri()) {
     panel.appendChild(el("h2", undefined, "② 高级：连接自建服务器"));
     panel.appendChild(
       el(
