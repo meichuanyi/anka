@@ -180,6 +180,7 @@ let decks: DeckCounts[] = [];
 let session: Session | null = null;
 let loading = false;
 let loadingMsg = "正在读取收藏…";
+let renderedMode: Mode | null = null;
 let syncPct: number | null = null;
 
 if (isTauri()) {
@@ -213,6 +214,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 function render() {
+  // Android 返回手势/返回键 => 应用内后退（而不是退出 App）
+  if (renderedMode !== mode) {
+    if (renderedMode !== null) history.pushState({ mode }, "", location.href);
+    renderedMode = mode;
+  }
   app.innerHTML = "";
   const shell = el("div", "shell");
   shell.appendChild(renderTop());
@@ -995,6 +1001,16 @@ async function grade(rating: number) {
     render();
   }
 }
+
+window.addEventListener("popstate", () => {
+  const st = (history.state || {}) as { mode?: Mode };
+  const target = (st.mode as Mode) || "home";
+  if (target === mode) return;
+  if (mode === "session" && target !== "session") session = null;
+  mode = target;
+  renderedMode = mode;
+  render();
+});
 
 window.addEventListener("keydown", (ev) => {
   if (error && ev.key === "Escape") {
