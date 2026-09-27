@@ -41,7 +41,7 @@ type NoteDto = {
   tags: string[];
 };
 
-type Mode = "home" | "session" | "add" | "browse" | "edit" | "settings";
+type Mode = "home" | "session" | "add" | "browse" | "edit" | "settings" | "stats";
 
 type Session = {
   deckName: string;
@@ -198,6 +198,7 @@ let selected = 0;
 let mode: Mode = "home";
 let browseQuery = "";
 let browseTotal = 0;
+let statsData: { days: number; stats: { date: string; reviews: number; due: number }[] } | null = null;
 let browseItems: NoteDto[] = [];
 let editNote: NoteDto | null = null;
 let flash: string | null = null;
@@ -238,6 +239,8 @@ function render() {
     stage.appendChild(renderEditForm(editNote));
   } else if (mode === "settings") {
     stage.appendChild(renderSettings());
+  } else if (mode === "stats") {
+    stage.appendChild(renderStats());
   } else {
     stage.appendChild(renderDecks(decks));
   }
@@ -298,13 +301,18 @@ function renderTop() {
       mode = "browse";
       void loadBrowse();
     };
+    const statsBtn = el("button", "nav-btn", "统计");
+    statsBtn.onclick = () => {
+      mode = "stats";
+      void loadStats();
+    };
     const settingsBtn = el("button", "nav-btn", "⚙");
     settingsBtn.title = "连接服务器";
     settingsBtn.onclick = () => {
       mode = "settings";
       render();
     };
-    nav.append(addBtn, browseBtn, settingsBtn);
+    nav.append(addBtn, browseBtn, statsBtn, settingsBtn);
   } else {
     const back = el("button", "nav-btn", "← 返回");
     back.onclick = () => {
@@ -575,6 +583,116 @@ return panel;
 }
 
 
+async function loadStats() {
+  loadingMsg = "正在读取学习统计…";
+  loading = true;
+  renderedMode = mode;
+  render();
+  try {
+    const res = await apiFetch("/api/stats/daily?days=120");
+    if (!res.ok) throw new Error(await res.text());
+    statsData = await res.json();
+    error = null;
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+  loading = false;
+  renderedMode = null;
+  render();
+}
+
+function svgEl(tag: string, attrs: Record<string, string | number>): SVGElement {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+  return node;
+}
+
+function dateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function renderStats() {
+  const panel = el("div", "form-panel");
+  panel.appendChild(el("h1", undefined, "学习统计"));
+  if (!statsData) {
+    panel.appendChild(el("p", "form-hint", "暂无数据"));
+    return panel;
+  }
+
+  const byDate = new Map(statsData.stats.map((x) => [x.date, x]));
+  const today = new Date();
+
+  // ---- 近 30 天复习 + 未来 30 天到期（柱状图） ----
+  const past: { date: string; reviews: number }[] = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    past.push({ date: dateStr(d), reviews: byDate.get(dateStr(d))?.reviews ?? 0 });
+  }
+  const future: { date: string; due: number }[] = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    future.push({ date: dateStr(d), due: byDate.get(dateStr(d))?.due ?? 0 });
+  }
+
+  const maxPast = Math.max(1, ...past.map((x) => x.reviews));
+  const maxDue = Math.max(1, ...future.map((x) => x.due));
+  const W = 640;
+  const H = 120;
+  const bw = W / 30;
+
+  const barSvg = svgEl("svg", { viewBox: `0 0 ${W} ${H + 16}`, width: "100%" });
+  past.forEach((x, i) => {
+    const h = (x.reviews / maxPast) * (H - 6);
+    if (h > 0) barSvg.appendChild(svgEl("rect", { x: i * bw + 1, y: H - h, width: bw - 2, height: h, fill: "#ff8c42", rx: 1 }));
+  });
+  panel.appendChild(el("p", "form-hint", "近 30 天复习次数"));
+  panel.appendChild(barSvg);
+
+  const futSvg = svgEl("svg", { viewBox: `0 0 ${W} ${H + 16}`, width: "100%" });
+  future.forEach((x, i) => {
+    const h = (x.due / maxDue) * (H - 6);
+    if (h > 0) futSvg.appendChild(svgEl("rect", { x: i * bw + 1, y: H - h, width: bw - 2, height: h, fill: "#7eb6ff", rx: 1 }));
+  });
+  panel.appendChild(el("p", "form-hint", "未来 30 天到期预测"));
+  panel.appendChild(futSvg);
+
+  // ---- 学习日历热力图（GitHub 风格） ----
+  panel.appendChild(el("p", "form-hint", "学习日历（近 18 周）"));
+  const calSvg = svgEl("svg", { viewBox: "0 0 140 130", width: "100%" });
+  const cell = 16;
+  const start = new Date(today);
+  start.setDate(start.getDate() - 125);
+  const totalReviews = statsData.stats.reduce((s2, x) => s2 + x.reviews, 0);
+  for (let i = 0; i <= 125; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const ds = dateStr(d);
+    const n = byDate.get(ds)?.reviews ?? 0;
+    const col = Math.floor(i / 7);
+    const row = d.getDay();
+    let fill = "#1d222a";
+    if (n >= 10) fill = "#ffc15e";
+    else if (n >= 6) fill = "#e4572e";
+    else if (n >= 3) fill = "#ff8c42";
+    else if (n >= 1) fill = "#8a4a2b";
+    const rect = svgEl("rect", { x: col * (cell + 3), y: row * (cell + 3), width: cell, height: cell, rx: 3, fill });
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    t.textContent = `${ds}：${n} 次复习`;
+    rect.appendChild(t);
+    calSvg.appendChild(rect);
+  }
+  void totalReviews;
+  panel.appendChild(calSvg);
+  panel.appendChild(el("p", "form-hint", "颜色越亮 = 当天复习越多 · 悬停查看日期"));
+
+  return panel;
+}
+
 /** Auto-sync to AnkiWeb after a review session finishes (if logged in). */
 function maybeAutoSync() {
   const aw = ankiwebSession();
@@ -682,6 +800,8 @@ function renderKeys() {
     keys.innerHTML = `Ctrl/⌘+Enter 保存`;
   } else if (mode === "browse") {
     keys.innerHTML = `搜索后点击「编辑」`;
+  } else if (mode === "stats") {
+    keys.innerHTML = `学习日历与进度曲线`;
   } else {
     keys.innerHTML = `<span class="kbd">↑↓</span> 选择 · <span class="kbd">Enter</span> 开始复习`;
   }

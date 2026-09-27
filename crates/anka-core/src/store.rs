@@ -306,6 +306,36 @@ impl<'c> Store<'c> {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// 每日复习次数（最近 days 天，含当天；返回 (日期, 复习数)）
+    pub fn review_daily(&self, days: u32) -> Result<Vec<(String, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT substr(reviewed_at, 1, 10) AS day, COUNT(*) \
+             FROM revlog \
+             WHERE reviewed_at >= datetime('now', ?1) \
+             GROUP BY day ORDER BY day",
+        )?;
+        let offset = format!("-{} days", days.saturating_sub(1));
+        let rows = stmt.query_map(params![offset], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u32))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// 未来到期预测（未来 days 天；返回 (日期, 到期卡数)）
+    pub fn due_forecast(&self, days: u32) -> Result<Vec<(String, u32)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT substr(due_at, 1, 10) AS day, COUNT(*) \
+             FROM cards \
+             WHERE due_at > datetime('now') AND due_at <= datetime('now', ?1) \
+             GROUP BY day ORDER BY day",
+        )?;
+        let offset = format!("+{} days", days);
+        let rows = stmt.query_map(params![offset], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u32))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn all_revlog(&self) -> Result<Vec<RevlogEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, card_id, rating, reviewed_at, elapsed_ms, stability_after, difficulty_after, interval_days

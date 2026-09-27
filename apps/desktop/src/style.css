@@ -645,3 +645,5 @@ button:not(:disabled):active {
   opacity: 0.6;
   margin-top: 18px;
 }
+
+svg .note-front, svg text { font-family: inherit; }

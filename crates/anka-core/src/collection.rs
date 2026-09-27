@@ -243,6 +243,16 @@ impl Collection {
             .collect())
     }
 
+    /// 每日复习次数（最近 days 天）
+    pub fn review_daily(&self, days: u32) -> Result<Vec<(String, u32)>> {
+        self.store().review_daily(days)
+    }
+
+    /// 未来到期预测（未来 days 天）
+    pub fn due_forecast(&self, days: u32) -> Result<Vec<(String, u32)>> {
+        self.store().due_forecast(days)
+    }
+
     pub fn all_revlog(&self) -> Result<Vec<RevlogEntry>> {
         self.store().all_revlog()
     }

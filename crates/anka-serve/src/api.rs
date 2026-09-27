@@ -90,6 +90,36 @@ struct AnkiwebLoginReq {
 
 /// Login to AnkiWeb once; returns the long-lived session hkey.
 /// The password is used in-memory for this single call and never stored.
+#[derive(serde::Serialize)]
+struct DailyStat {
+    date: String,
+    reviews: u32,
+    due: u32,
+}
+
+async fn stats_daily(
+    State(state): State<Shared>,
+    Query(params): Query<std::collections::HashMap<String, u32>>,
+) -> Result<Json<serde_json::Value>, String> {
+    let days = params.get("days").copied().unwrap_or(120).clamp(7, 365);
+    let mut col = state.collection.lock().map_err(|_| "lock".to_string())?;
+    let reviews = col.review_daily(days).map_err(|e| e.to_string())?;
+    let forecast = col.due_forecast(days).map_err(|e| e.to_string())?;
+    let mut map: std::collections::BTreeMap<String, DailyStat> = std::collections::BTreeMap::new();
+    for (day, count) in reviews {
+        let e = map.entry(day.clone()).or_insert_with(|| DailyStat { date: day.clone(), reviews: 0, due: 0 });
+        e.reviews += count;
+    }
+    for (day, count) in forecast {
+        let e = map.entry(day.clone()).or_insert_with(|| DailyStat { date: day.clone(), reviews: 0, due: 0 });
+        e.due += count;
+    }
+    Ok(Json(serde_json::json!({
+        "days": days,
+        "stats": map.into_values().collect::<Vec<_>>(),
+    })))
+}
+
 async fn ankiweb_login(
     Json(req): Json<AnkiwebLoginReq>,
 ) -> Result<Json<serde_json::Value>, String> {
@@ -164,6 +194,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/notes", get(search_notes).post(create_note))
         .route("/api/notes/{id}", get(get_note).put(update_note))
         .route("/api/ankiweb/import", post(ankiweb_import))
+        .route("/api/stats/daily", get(stats_daily))
         .route("/api/ankiweb/sync", post(ankiweb_sync))
         .route("/api/ankiweb/login", post(ankiweb_login))
         .with_state(state)
