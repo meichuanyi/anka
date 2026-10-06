@@ -330,8 +330,23 @@ fn install_apk(app: tauri::AppHandle, url: String) -> Result<(), String> {
             .app_cache_dir()
             .map_err(|e| format!("cache dir: {e}"))?;
         std::thread::spawn(move || {
-            if let Err(e) = install_apk_android(&url, &cache_dir) {
-                eprintln!("[update] in-app install failed: {e}");
+            use tauri::Emitter;
+            // Download + install happen off the invoke; the only way the UI
+            // learns the outcome is this event channel (failures used to be
+            // swallowed by eprintln, leaving the user with no installer).
+            let emit = |stage: &str, msg: &str| {
+                let _ = app.emit(
+                    "apk-install",
+                    serde_json::json!({ "stage": stage, "msg": msg }),
+                );
+            };
+            emit("downloading", "正在后台下载更新包…");
+            match install_apk_android(&url, &cache_dir) {
+                Ok(()) => emit("launching", "已拉起系统安装界面，请在弹窗中确认安装"),
+                Err(e) => emit(
+                    "error",
+                    &format!("应用内安装失败：{e}。可改用浏览器打开 Release 页手动下载安装。"),
+                ),
             }
         });
         Ok(())
@@ -350,10 +365,21 @@ fn install_apk_android(url: &str, dir: &std::path::Path) -> Result<(), String> {
     use jni::objects::{JClass, JObject, JValue};
 
     let file = dir.join("anka-update.apk");
-    let mut resp = reqwest::blocking::get(url).map_err(|e| format!("下载失败: {e}"))?;
+    let mut resp =
+        reqwest::blocking::get(url).map_err(|e| format!("下载失败（网络）: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载失败: HTTP {}", resp.status()));
+    }
     let mut out = std::fs::File::create(&file).map_err(|e| format!("写入失败: {e}"))?;
     std::io::copy(&mut resp, &mut out).map_err(|e| format!("保存失败: {e}"))?;
     drop(out);
+    let size = file
+        .metadata()
+        .map_err(|e| format!("读取下载结果失败: {e}"))?
+        .len();
+    if size < 1_000_000 {
+        return Err(format!("下载不完整（仅 {size} 字节），多半是网络中断，请重试"));
+    }
 
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| format!("vm: {e}"))?;
