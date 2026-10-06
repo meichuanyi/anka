@@ -3,6 +3,7 @@ resolver = "2"
 exclude = ["crates/anka-sync-engine"]
 members = [
     "crates/anka-core",
+    "crates/anka-ai",
     "crates/anka-ankiweb",
     "crates/anka-apkg",
     "crates/anka-cli",
@@ -21,6 +22,7 @@ repository = "https://github.com/meichuanyi/anka"
 rust-version = "1.80"
 
 [workspace.dependencies]
+anka-ai = { path = "crates/anka-ai" }
 anka-ankiweb = { path = "crates/anka-ankiweb" }
 anka-core = { path = "crates/anka-core" }
 anka-apkg = { path = "crates/anka-apkg" }

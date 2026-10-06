@@ -13,8 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+anka-ai.workspace = true
 anka-ankiweb.workspace = true
 anka-core.workspace = true
+reqwest.workspace = true
 tauri-plugin-updater = "2"
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
@@ -26,4 +28,3 @@ uuid.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

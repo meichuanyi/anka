@@ -1,0 +1,12 @@
+[package]
+name = "anka-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OpenAI-compatible chat client shared by anka-serve and the Tauri shell"
+
+[dependencies]
+anyhow.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true

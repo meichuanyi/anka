@@ -131,6 +131,32 @@ const api = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+  async aiChat(messages: { role: string; content: string }[]): Promise<string> {
+    const cfg = aiConfig();
+    if (native()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const r = await invoke<{ text: string }>("ai_chat", {
+        baseUrl: cfg.baseUrl || "",
+        apiKey: cfg.apiKey || "",
+        model: cfg.model || "",
+        messages,
+      });
+      return r.text;
+    }
+    const res = await apiFetch("/api/ai/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: cfg.baseUrl || null,
+        apiKey: cfg.apiKey || null,
+        model: cfg.model || null,
+        messages,
+      }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const j = (await res.json()) as { text: string };
+    return j.text;
+  },
 };
 
 /** Saved AnkiWeb login session (hkey, not the password). */
@@ -157,6 +183,24 @@ function remoteConfig(): { base: string; token: string } {
 /** Prefer a configured remote server over the local collection (mobile thin-client mode). */
 function native(): boolean {
   return isTauri() && !useRemote();
+}
+
+/** OpenAI-compatible LLM endpoint config (long-press a card to ask AI). */
+function aiConfig(): { baseUrl: string; apiKey: string; model: string } {
+  try {
+    return JSON.parse(localStorage.getItem("anka.ai") || "{}") as {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
+  } catch {
+    return { baseUrl: "", apiKey: "", model: "" };
+  }
+}
+
+function aiConfigured(): boolean {
+  const c = aiConfig();
+  return Boolean(c.baseUrl && c.model);
 }
 
 function useRemote(): boolean {
@@ -202,6 +246,29 @@ let statsData: { days: number; stats: { date: string; reviews: number; due: numb
 let browseItems: NoteDto[] = [];
 let editNote: NoteDto | null = null;
 let flash: string | null = null;
+
+// ---- AI 问卡（长按卡片唤出） ----
+type AiTurn = { q: string; a: string };
+type AiCardCtx = {
+  deckName: string;
+  front: string;
+  back: string;
+  example?: string;
+};
+type AiSeedCard = { front: string; back: string; tags: string[]; deck?: string };
+let aiOpen = false;
+let aiCtx: AiCardCtx | null = null;
+let aiTurns: AiTurn[] = [];
+let aiBusy = false;
+let aiError: string | null = null;
+let pendingAICard: AiSeedCard | null = null;
+
+const AI_PRESETS: Array<[string, string]> = [
+  ["详解", "请详细解释这张卡片的内容：含义、要点和常见用法。"],
+  ["例句", "请给出 5 个实用例句（附中文翻译）。"],
+  ["记忆", "请给出词源/记忆技巧/联想方法，帮助我牢牢记住。"],
+  ["辨析", "请辨析它的近义词/易混淆点，并给出对比。"],
+];
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -254,6 +321,7 @@ function render() {
     }, 1800);
   }
   shell.appendChild(renderKeys());
+  if (aiOpen && aiCtx) shell.appendChild(renderAiSheet());
   app.appendChild(shell);
 }
 
@@ -536,6 +604,46 @@ function renderSettings() {
     panel.appendChild(actions);
   }
 
+  // ---------- ③ AI 大模型（长按卡片提问） ----------
+  panel.appendChild(el("h2", undefined, "③ AI 大模型（长按卡片提问）"));
+  panel.appendChild(
+    el(
+      "p",
+      "settings-hint",
+      "填 OpenAI 兼容接口后，复习时长按卡片即可向 AI 提问，还能把回答提炼成新卡片。常用：DeepSeek https://api.deepseek.com · 通义 https://dashscope.aliyuncs.com/compatible-mode/v1 · Kimi https://api.moonshot.cn/v1 · OpenAI https://api.openai.com/v1 · 本地 Ollama http://localhost:11434/v1",
+    ),
+  );
+  const savedAi = aiConfig();
+  const aiBase = fieldInput("接口地址 Base URL", savedAi.baseUrl || "");
+  aiBase.input.placeholder = "https://api.deepseek.com";
+  const aiKey = fieldInput("API Key", savedAi.apiKey || "");
+  (aiKey.input as HTMLInputElement).type = "password";
+  const aiModel = fieldInput("模型名 Model", savedAi.model || "");
+  aiModel.input.placeholder = "deepseek-chat";
+  panel.append(aiBase.wrap, aiKey.wrap, aiModel.wrap);
+  const aiActions = el("div", "form-actions");
+  const aiClear = el("button", "nav-btn", "清除");
+  aiClear.onclick = () => {
+    localStorage.removeItem("anka.ai");
+    flash = "AI 配置已清除";
+    render();
+  };
+  const aiSave = el("button", "reveal", "保存 AI 配置");
+  aiSave.onclick = () => {
+    localStorage.setItem(
+      "anka.ai",
+      JSON.stringify({
+        baseUrl: aiBase.input.value.trim().replace(/\/+$/, ""),
+        apiKey: aiKey.input.value.trim(),
+        model: aiModel.input.value.trim(),
+      }),
+    );
+    flash = "AI 配置已保存";
+    render();
+  };
+  aiActions.append(aiClear, aiSave);
+  panel.appendChild(aiActions);
+
   // ---------- 检查更新 ----------
   const upd = el("div", "subcard");
   upd.appendChild(el("h2", undefined, "检查更新"));
@@ -757,11 +865,17 @@ async function checkForUpdate(): Promise<string> {
       const rel = (await res.json()) as {
         tag_name?: string;
         html_url?: string;
-        assets?: { name: string; browser_download_url: string }[];
+        assets?: { name: string; size: number; browser_download_url: string }[];
       };
       const latest = (rel.tag_name || "").replace(/^v/, "");
       if (!latest || cmpVersion(latest, current) <= 0) return "当前已是最新版本";
-      const apk = (rel.assets || []).find((a) => a.name.endsWith(".apk"));
+      // Prefer the slim signed build (anka-mobile-*.apk); CI's debug APK is
+      // ~220MB and signed with an ephemeral key that won't install over
+      // locally-signed builds.
+      const apks = (rel.assets || []).filter((a) => a.name.endsWith(".apk"));
+      const apk =
+        apks.find((a) => a.name.startsWith("anka-mobile-")) ??
+        apks.sort((a, b) => a.size - b.size)[0];
       if (apk) {
         try {
           const { invoke } = await import("@tauri-apps/api/core");
@@ -992,7 +1106,15 @@ function renderSession(s: Session) {
       : tpl === "dictation"
         ? "听音 → 写出单词"
         : "单词 → 回忆释义";
-  card.appendChild(el("div", "prompt", tip));
+  card.appendChild(el("div", "prompt", `${tip} · 长按卡片可问 AI`));
+  onLongPress(card, () =>
+    openAiSheet({
+      deckName: current.deckName,
+      front: current.front,
+      back: current.back,
+      example: current.example || undefined,
+    }),
+  );
 
   if (s.revealed) {
     const answer = el("div", "answer");
@@ -1039,6 +1161,239 @@ function renderSession(s: Session) {
   }
   host.appendChild(actions);
   return host;
+}
+
+/** Fire fn after a 500ms touch long-press; desktop right-click also works. */
+function onLongPress(node: HTMLElement, fn: () => void) {
+  let timer: number | null = null;
+  let sx = 0;
+  let sy = 0;
+  const cancel = () => {
+    if (timer != null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+  };
+  node.addEventListener(
+    "touchstart",
+    (e) => {
+      if (e.touches.length !== 1) return cancel();
+      const t = e.touches[0]!;
+      sx = t.clientX;
+      sy = t.clientY;
+      timer = window.setTimeout(() => {
+        timer = null;
+        fn();
+      }, 500);
+    },
+    { passive: true },
+  );
+  node.addEventListener(
+    "touchmove",
+    (e) => {
+      const t = e.touches[0];
+      if (t && Math.hypot(t.clientX - sx, t.clientY - sy) > 12) cancel();
+    },
+    { passive: true },
+  );
+  node.addEventListener("touchend", cancel);
+  node.addEventListener("touchcancel", cancel);
+  node.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    fn();
+  });
+}
+
+function openAiSheet(ctx: AiCardCtx) {
+  aiCtx = ctx;
+  aiTurns = [];
+  aiError = null;
+  aiOpen = true;
+  render();
+}
+
+function closeAiSheet() {
+  aiOpen = false;
+  aiCtx = null;
+  render();
+}
+
+function aiSystemPrompt(): string {
+  const c = aiCtx!;
+  return [
+    "你是 Anka 记忆卡片的学习助手。用户正在复习下面这张卡片：",
+    `正面：${c.front}`,
+    `背面：${c.back || "（无）"}`,
+    c.example ? `例句：${c.example}` : "",
+    "请围绕卡片内容解答提问：中文为主，简洁准确，可用换行和短列表分点，不要输出 HTML。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function aiAsk(question: string) {
+  if (!aiCtx || aiBusy) return;
+  const q = question.trim();
+  if (!q) return;
+  aiBusy = true;
+  aiError = null;
+  render();
+  const messages = [
+    { role: "system", content: aiSystemPrompt() },
+    ...aiTurns.flatMap((t) => [
+      { role: "user", content: t.q },
+      { role: "assistant", content: t.a },
+    ]),
+    { role: "user", content: q },
+  ];
+  try {
+    const a = await api.aiChat(messages);
+    aiTurns.push({ q, a });
+  } catch (e) {
+    aiError = e instanceof Error ? e.message : String(e);
+  } finally {
+    aiBusy = false;
+    render();
+  }
+}
+
+/** Distill the Q&A turns into a new card via the LLM, then prefill the
+ *  add-note form so the user can review and confirm before saving. */
+async function aiDistill() {
+  if (!aiCtx || aiBusy || !aiTurns.length) return;
+  aiBusy = true;
+  aiError = null;
+  render();
+  const ctx = aiCtx;
+  const qa = aiTurns.map((t) => `问：${t.q}\n答：${t.a}`).join("\n\n");
+  try {
+    const text = await api.aiChat([
+      {
+        role: "system",
+        content:
+          '把用户提供的卡片问答内容提炼成一张记忆卡片。只输出一个 JSON 对象，格式：{"front":"简短的问题或提示，能独立理解，不引用上下文","back":"答案要点，简洁分点","tags":["相关标签"]}，不要输出其他文字。',
+      },
+      {
+        role: "user",
+        content: `卡片原文：\n正面：${ctx.front}\n背面：${ctx.back || "（无）"}\n\n问答记录：\n${qa}`,
+      },
+    ]);
+    const parsed = extractJsonCard(text);
+    pendingAICard = parsed
+      ? { ...parsed, deck: ctx.deckName || undefined }
+      : {
+          front: ctx.front,
+          back: aiTurns.map((t) => `${t.q}\n${t.a}`).join("\n\n"),
+          tags: [],
+          deck: ctx.deckName || undefined,
+        };
+    aiOpen = false;
+    aiCtx = null;
+    aiBusy = false;
+    mode = "add";
+    render();
+  } catch (e) {
+    aiBusy = false;
+    aiError = e instanceof Error ? e.message : String(e);
+    render();
+  }
+}
+
+/** Tolerant JSON extraction from an LLM reply: strips code fences,
+ *  slices the outermost {...}, and validates the card shape. */
+function extractJsonCard(
+  text: string,
+): { front: string; back: string; tags: string[] } | null {
+  let t = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/, "")
+    .trim();
+  const s = t.indexOf("{");
+  const e = t.lastIndexOf("}");
+  if (s >= 0 && e > s) t = t.slice(s, e + 1);
+  try {
+    const j = JSON.parse(t) as { front?: unknown; back?: unknown; tags?: unknown };
+    if (typeof j.front === "string" && typeof j.back === "string") {
+      return {
+        front: j.front,
+        back: j.back,
+        tags: Array.isArray(j.tags) ? j.tags.map(String) : [],
+      };
+    }
+  } catch {
+    /* fall through to caller's fallback */
+  }
+  return null;
+}
+
+function renderAiSheet() {
+  const backdrop = el("div", "ai-backdrop");
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) closeAiSheet();
+  });
+
+  const sheet = el("div", "ai-sheet");
+  const head = el("div", "ai-head");
+  head.appendChild(el("div", "ai-title", `AI 问卡 · ${aiCtx!.front.slice(0, 24)}`));
+  const closeBtn = el("button", "nav-btn", "✕");
+  closeBtn.addEventListener("click", closeAiSheet);
+  head.appendChild(closeBtn);
+  sheet.appendChild(head);
+
+  const chat = el("div", "ai-chat");
+  const intro = el("div", "ai-intro");
+  intro.textContent = `正面：${aiCtx!.front}\n背面：${aiCtx!.back || "（无）"}${aiCtx!.example ? `\n例句：${aiCtx!.example}` : ""}`;
+  chat.appendChild(intro);
+  for (const t of aiTurns) {
+    chat.appendChild(el("div", "ai-q", t.q));
+    chat.appendChild(el("div", "ai-a", t.a));
+  }
+  if (aiBusy) chat.appendChild(el("div", "ai-typing", "思考中…"));
+  if (aiError) chat.appendChild(el("div", "ai-error", aiError));
+  sheet.appendChild(chat);
+  setTimeout(() => {
+    chat.scrollTop = chat.scrollHeight;
+  }, 0);
+
+  const chips = el("div", "ai-chips");
+  for (const [label, prompt] of AI_PRESETS) {
+    const chip = el("button", "ai-chip", label);
+    chip.addEventListener("click", () => void aiAsk(prompt));
+    chips.appendChild(chip);
+  }
+  sheet.appendChild(chips);
+
+  const inputRow = el("div", "ai-inputrow");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "针对这张卡片提问…";
+  const send = () => {
+    const v = input.value;
+    input.value = "";
+    void aiAsk(v);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+  const sendBtn = el("button", "reveal ai-send", aiBusy ? "…" : "发送");
+  sendBtn.disabled = aiBusy;
+  sendBtn.addEventListener("click", send);
+  inputRow.append(input, sendBtn);
+  sheet.appendChild(inputRow);
+
+  const actions = el("div", "form-actions");
+  const distill = el("button", "reveal", "✂ 提炼成卡片");
+  distill.disabled = aiBusy || !aiTurns.length;
+  distill.addEventListener("click", () => void aiDistill());
+  actions.appendChild(distill);
+  sheet.appendChild(actions);
+  sheet.appendChild(
+    el("p", "form-hint", "提炼后进入新建卡片，确认后保存"),
+  );
+
+  backdrop.appendChild(sheet);
+  return backdrop;
 }
 
 /** One-click setup: anka-server logs a URL with #t=<token>; opening it
@@ -1138,6 +1493,10 @@ window.addEventListener("keydown", (ev) => {
     render();
     return;
   }
+  if (aiOpen) {
+    if (ev.key === "Escape") closeAiSheet();
+    return;
+  }
   if (!session) {
     const studyable = studyableDecks(decks);
     if (ev.key === "ArrowDown") {
@@ -1189,21 +1548,26 @@ function fieldInput(label: string, value: string, multiline = false) {
 }
 
 function renderAddForm() {
+  const aiSeed = pendingAICard;
   const panel = el("div", "form-panel");
-  panel.appendChild(el("h1", undefined, "新建卡片"));
+  panel.appendChild(el("h1", undefined, aiSeed ? "AI 提炼的卡片" : "新建卡片"));
+  if (aiSeed) {
+    panel.appendChild(el("p", "form-hint", "由 AI 问答提炼生成，可修改后保存。"));
+  }
   const deckField = fieldInput(
     "牌组",
-    decks[0]?.name || "Default",
+    aiSeed?.deck || decks[0]?.name || "Default",
   );
-  const frontField = fieldInput("正面 / 单词", "");
-  const backField = fieldInput("背面 / 释义", "", true);
-  const tagsField = fieldInput("标签（空格分隔）", "");
+  const frontField = fieldInput("正面 / 单词", aiSeed?.front || "");
+  const backField = fieldInput("背面 / 释义", aiSeed?.back || "", true);
+  const tagsField = fieldInput("标签（空格分隔）", aiSeed?.tags.join(" ") || "");
   panel.append(deckField.wrap, frontField.wrap, backField.wrap, tagsField.wrap);
 
   const actions = el("div", "form-actions");
   const save = el("button", "reveal", "保存卡片");
   const cancel = el("button", "nav-btn", "取消");
   cancel.onclick = () => {
+    pendingAICard = null;
     mode = "home";
     render();
   };
@@ -1225,6 +1589,7 @@ function renderAddForm() {
         tagsField.input.value.split(/\s+/).filter(Boolean),
       );
       flash = "已添加";
+      pendingAICard = null;
       mode = "home";
       error = null;
       await refreshDecks();
@@ -1296,7 +1661,7 @@ function renderBrowse() {
     return panel;
   }
 
-  panel.appendChild(el("p", "form-hint", `共 ${browseTotal} 条笔记，按牌组分组`));
+  panel.appendChild(el("p", "form-hint", `共 ${browseTotal} 条笔记，按牌组分组 · 长按笔记可问 AI`));
 
   const byDeck = new Map<string, NoteDto[]>();
   for (const n of browseItems) {
@@ -1319,6 +1684,13 @@ function renderBrowse() {
         render();
       };
       row.append(main, edit);
+      onLongPress(row, () =>
+        openAiSheet({
+          deckName: n.deckName,
+          front: n.front || n.fields[0] || "",
+          back: n.back || n.fields[1] || "",
+        }),
+      );
       list.appendChild(row);
     }
     panel.appendChild(list);

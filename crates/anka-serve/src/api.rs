@@ -132,6 +132,47 @@ async fn ankiweb_login(
     Ok(Json(serde_json::json!({ "hkey": hkey })))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiChatBody {
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    messages: Vec<anka_ai::AiMessage>,
+}
+
+/// Proxy a chat completion to an OpenAI-compatible endpoint. The client's
+/// AI config rides in the body and is never persisted; empty fields fall
+/// back to server-side env (ANKA_AI_BASE_URL / ANKA_AI_KEY / ANKA_AI_MODEL).
+async fn ai_chat(Json(req): Json<AiChatBody>) -> Result<Json<serde_json::Value>, String> {
+    let env = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
+    let cfg = anka_ai::AiConfig {
+        base_url: req
+            .base_url
+            .filter(|v| !v.is_empty())
+            .or_else(|| env("ANKA_AI_BASE_URL"))
+            .unwrap_or_default(),
+        api_key: req
+            .api_key
+            .filter(|v| !v.is_empty())
+            .or_else(|| env("ANKA_AI_KEY"))
+            .unwrap_or_default(),
+        model: req
+            .model
+            .filter(|v| !v.is_empty())
+            .or_else(|| env("ANKA_AI_MODEL"))
+            .unwrap_or_default(),
+    };
+    let text = tokio::task::spawn_blocking(move || anka_ai::chat_blocking(&cfg, &req.messages))
+        .await
+        .map_err(|e| format!("task join: {e}"))?
+        .map_err(|e| e.to_string())?;
+    Ok(Json(serde_json::json!({ "text": text })))
+}
+
 /// Two-way sync: run the anka-sync-agent (official engine) against AnkiWeb,
 /// then merge the agent collection into the serving collection.
 /// The password is used in-memory for a single login call and never stored.
@@ -195,6 +236,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/notes/{id}", get(get_note).put(update_note))
         .route("/api/ankiweb/import", post(ankiweb_import))
         .route("/api/stats/daily", get(stats_daily))
+        .route("/api/ai/chat", post(ai_chat))
         .route("/api/ankiweb/sync", post(ankiweb_sync))
         .route("/api/ankiweb/login", post(ankiweb_login))
         .with_state(state)

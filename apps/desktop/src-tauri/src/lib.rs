@@ -460,6 +460,27 @@ fn install_apk_android(url: &str, dir: &std::path::Path) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn ai_chat(
+    base_url: String,
+    api_key: String,
+    model: String,
+    messages: Vec<anka_ai::AiMessage>,
+) -> Result<serde_json::Value, String> {
+    // blocking HTTP must stay off the main thread (freezes the UI otherwise)
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = anka_ai::AiConfig {
+            base_url,
+            api_key,
+            model,
+        };
+        let text = anka_ai::chat_blocking(&cfg, &messages).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({ "text": text }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn ankiweb_login(user: String, password: String) -> Result<serde_json::Value, String> {
     // blocking HTTP must stay off the main thread (freezes the UI otherwise)
     tauri::async_runtime::spawn_blocking(move || {
@@ -553,6 +574,7 @@ pub fn run() {
             ankiweb_import,
             ankiweb_login,
             ankiweb_sync,
+            ai_chat,
             install_apk
         ])
         .run(tauri::generate_context!())
