@@ -64,6 +64,11 @@ $BT/apksigner sign --ks ~/anka-release.keystore --ks-key-alias anka \
 $BT/apksigner verify anka-mobile-vX.Y.Z.apk
 ```
 
+> 密码不在本仓库：记录在构建机 `~/anka-release-note.txt`（chmod 600）。
+> 当前密钥自 **v0.1.15** 起生效（证书 `14:c3:e2:d8:...`）；旧密钥（v0.1.9–v0.1.14，
+> 证书 `A9:1E:CD:B3:...`）密码遗失，备份在 `~/anka-release.keystore.lost-20261007`。
+> 换签名密钥后，老安装需**卸载重装**一次才能升级（Android 签名校验）。
+
 ## iOS 构建（需要 macOS + Xcode）
 
 Linux 无法编译 iOS。在 Mac 上：
