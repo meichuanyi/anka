@@ -8,3 +8,10 @@ dist/
 media/
 .DS_Store
 *.log
+
+# 签名密钥 / 安装包 / 会话目录——永不入库（真实文件在构建机 /root/.secrets/anka/）
+*.keystore
+*.jks
+*.idsig
+anka-mobile-*.apk
+.zcode/
