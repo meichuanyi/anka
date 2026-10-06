@@ -50,24 +50,24 @@ npx tauri android build --apk --debug --target aarch64
 
 ### Release 签名
 
-本项目实际使用的流程（keystore 不入库，放在构建机 `~/anka-release.keystore`）：
+本项目实际使用的流程（keystore 不入库，放在构建机 `/root/.secrets/anka/release.keystore`）：
 
 ```bash
-keytool -genkeypair -v -keystore ~/anka-release.keystore -alias anka \
+# 首次生成（已生成，勿重复执行——换钥会导致老安装无法覆盖升级）
+keytool -genkeypair -v -keystore /root/.secrets/anka/release.keystore -alias anka \
   -keyalg RSA -keysize 2048 -validity 10000
 
 npx tauri android build --apk --target aarch64   # 产出 unsigned APK
 BT=$ANDROID_HOME/build-tools/34.0.0
 $BT/zipalign -f 4 app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk /tmp/anka-aligned.apk
-$BT/apksigner sign --ks ~/anka-release.keystore --ks-key-alias anka \
+$BT/apksigner sign --ks /root/.secrets/anka/release.keystore --ks-key-alias anka \
   --ks-pass pass:*** --key-pass pass:*** --out anka-mobile-vX.Y.Z.apk /tmp/anka-aligned.apk
 $BT/apksigner verify anka-mobile-vX.Y.Z.apk
 ```
 
-> 密码不在本仓库：记录在构建机 `~/anka-release-note.txt`（chmod 600）。
-> 当前密钥自 **v0.1.15** 起生效（证书 `14:c3:e2:d8:...`）；旧密钥（v0.1.9–v0.1.14，
-> 证书 `A9:1E:CD:B3:...`）密码遗失，备份在 `~/anka-release.keystore.lost-20261007`。
-> 换签名密钥后，老安装需**卸载重装**一次才能升级（Android 签名校验）。
+> 密码不在本仓库：记录在构建机 `/root/.secrets/anka/release-note.txt`（chmod 600）。
+> 该密钥（证书 `A9:1E:CD:B3:...`）自 v0.1.9 起持续使用，**务必沿用**——
+> 更换签名密钥后，老安装必须卸载重装才能升级（Android 签名校验）。
 
 ## iOS 构建（需要 macOS + Xcode）
 
