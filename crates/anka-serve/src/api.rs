@@ -586,3 +586,155 @@ async fn update_note(
         .map_err(|e| e.to_string())?;
     note_to_dto(&col, note).map_err(ApiError).map(Json)
 }
+
+/* ---------- App 更新中转（学 HarnessGate）：手机直连 GitHub 慢/不稳，
+   服务器用 gh 下载一次并缓存，手机走局域网秒下。
+   两个端点公开（无鉴权）——APK 在 GitHub 上本就是公开产物。 ---------- */
+
+use std::process::Command;
+use std::sync::OnceLock;
+
+fn gh(args: &[&str]) -> Result<String, String> {
+    let out = Command::new("gh")
+        .args(args)
+        // systemd 服务没有 HOME，gh 找不到 ~/.config/gh 认证 → 显式兜底
+        .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
+        .output()
+        .map_err(|e| format!("服务器没有 gh 命令: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "gh {} 失败: {}",
+            args.join(" "),
+            err.chars().take(200).collect::<String>()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Parse `gh release view --json` output → (tag, apk asset name, apk size).
+fn gh_release_apk(tag: &str) -> Result<(String, String, u64), String> {
+    let mut args: Vec<&str> = vec!["release", "view"];
+    if !tag.is_empty() {
+        args.push(tag);
+    }
+    args.extend_from_slice(&["--json", "tagName,assets"]);
+    let out = gh(&args)?;
+    let j: serde_json::Value =
+        serde_json::from_str(&out).map_err(|e| format!("解析 release JSON: {e}"))?;
+    let tag = j["tagName"]
+        .as_str()
+        .ok_or("release 无 tagName")?
+        .to_string();
+    let assets = j["assets"].as_array().ok_or("release 无 assets")?;
+    // 精简签名包优先（anka-mobile-*.apk），CI debug 包是临时签名装不上
+    let apk = assets
+        .iter()
+        .find(|a| {
+            a["name"]
+                .as_str()
+                .map(|n| n.starts_with("anka-mobile-") && n.ends_with(".apk"))
+                .unwrap_or(false)
+        })
+        .or_else(|| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str().map(|n| n.ends_with(".apk")).unwrap_or(false))
+        })
+        .ok_or("release 没有 Android APK 产物")?;
+    let name = apk["name"].as_str().unwrap_or_default().to_string();
+    let size = apk["size"].as_u64().unwrap_or(0);
+    Ok((tag, name, size))
+}
+
+fn apk_cache_dir(state: &Shared) -> PathBuf {
+    state
+        .path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("apk-cache")
+}
+
+/// Download-once cache (single-flight: concurrent callers wait on one download).
+fn ensure_apk_cached(state: &Shared, tag: &str) -> Result<PathBuf, String> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = LOCK.get_or_init(|| Mutex::new(())).lock().map_err(|_| "lock")?;
+    let (tag, name, size) = gh_release_apk(tag)?;
+    let dir = apk_cache_dir(state);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建缓存目录: {e}"))?;
+    let file = dir.join(&name);
+    if file.metadata().map(|m| m.len()).ok() == Some(size) {
+        return Ok(file); // 已缓存
+    }
+    let tmp = dir.join(format!("{name}.tmp"));
+    let mut args: Vec<&str> = vec!["release", "download"];
+    if !tag.is_empty() {
+        args.push(&tag);
+    }
+    args.extend_from_slice(&["-p", &name, "-O"]);
+    args.push(tmp.to_str().unwrap_or("apk.tmp"));
+    gh(&args)?;
+    std::fs::rename(&tmp, &file).map_err(|e| format!("缓存落盘: {e}"))?;
+    Ok(file)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppLatestDto {
+    tag: String,
+    version: String,
+    apk_name: String,
+    apk_size: u64,
+    apk_path: String,
+}
+
+async fn app_latest() -> Result<Json<AppLatestDto>, ApiError> {
+    let (tag, name, size) = tokio::task::spawn_blocking(|| gh_release_apk(""))
+        .await
+        .map_err(|e| format!("task join: {e}"))?
+        .map_err(ApiError)?;
+    Ok(Json(AppLatestDto {
+        version: tag.trim_start_matches('v').to_string(),
+        apk_path: format!("/api/app/apk?tag={tag}"),
+        tag,
+        apk_name: name,
+        apk_size: size,
+    }))
+}
+
+async fn app_apk(
+    State(state): State<Shared>,
+    Query(p): Query<std::collections::HashMap<String, String>>,
+) -> Result<axum::response::Response, ApiError> {
+    let tag = p.get("tag").cloned().unwrap_or_default();
+    let state2 = state.clone();
+    let file = tokio::task::spawn_blocking(move || ensure_apk_cached(&state2, &tag))
+        .await
+        .map_err(|e| format!("task join: {e}"))?
+        .map_err(ApiError)?;
+    let bytes = std::fs::read(&file).map_err(|e| format!("读取缓存 APK: {e}"))?;
+    let name = file
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    use axum::http::{header, HeaderValue, StatusCode};
+    use axum::response::IntoResponse as _;
+    let mut resp = (StatusCode::OK, axum::body::Body::from(bytes)).into_response();
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.android.package-archive"),
+    );
+    if let Ok(cd) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, cd);
+    }
+    Ok(resp)
+}
+
+/// Public (no-auth) router: mounted outside the token middleware by anka-server.
+pub fn app_update_router(state: Shared) -> Router {
+    Router::new()
+        .route("/api/app/latest", get(app_latest))
+        .route("/api/app/apk", get(app_apk))
+        .with_state(state)
+}

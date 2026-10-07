@@ -66,8 +66,11 @@ async fn main() -> Result<()> {
 
     let auth = RequireToken::new(token.clone());
 
-    // Public health (no auth) for probes.
-    let public = axum::Router::new().route("/health", axum::routing::get(health));
+    // Public health (no auth) for probes + app-update relay (APK is a public
+    // artifact; the phone's in-app updater may not carry a token).
+    let public = axum::Router::new()
+        .route("/health", axum::routing::get(health))
+        .merge(anka_serve::app_update_router(state.clone()));
 
     // Protected API + MCP
     let protected = anka_serve::router(state.clone())

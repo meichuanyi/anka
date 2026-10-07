@@ -51,7 +51,9 @@ async fn main() -> Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let mut app = anka_serve::router(state).layer(cors);
+    let mut app = anka_serve::router(state.clone())
+        .merge(anka_serve::app_update_router(state))
+        .layer(cors);
 
     let media_dir = anka_core::media_dir_for_collection(&path);
     if media_dir.is_dir() {

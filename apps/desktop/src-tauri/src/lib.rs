@@ -322,26 +322,52 @@ async fn ankiweb_sync(
 }
 
 #[tauri::command]
-fn install_apk(app: tauri::AppHandle, url: String) -> Result<(), String> {
+fn install_apk(
+    app: tauri::AppHandle,
+    url: String,
+    relay_url: Option<String>,
+    token: Option<String>,
+    expected_size: Option<u64>,
+) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         let cache_dir = app
             .path()
             .app_cache_dir()
             .map_err(|e| format!("cache dir: {e}"))?;
+        let app = std::sync::Arc::new(app);
+        let app2 = app.clone();
         std::thread::spawn(move || {
             use tauri::Emitter;
             // Download + install happen off the invoke; the only way the UI
-            // learns the outcome is this event channel (failures used to be
-            // swallowed by eprintln, leaving the user with no installer).
+            // learns the outcome is this event channel.
             let emit = |stage: &str, msg: &str| {
-                let _ = app.emit(
+                let _ = app2.emit(
                     "apk-install",
                     serde_json::json!({ "stage": stage, "msg": msg }),
                 );
             };
-            emit("downloading", "正在后台下载更新包…");
-            match install_apk_android(&url, &cache_dir) {
+            let on_progress = {
+                let app = app.clone();
+                move |pct: u8| {
+                    let _ = app.emit(
+                        "apk-install",
+                        serde_json::json!({
+                            "stage": "downloading",
+                            "msg": format!("正在下载更新包… {pct}%"),
+                        }),
+                    );
+                }
+            };
+            emit("downloading", "正在下载更新包…");
+            match install_apk_android(
+                &url,
+                relay_url.as_deref(),
+                token.as_deref(),
+                expected_size.unwrap_or(0),
+                &cache_dir,
+                &on_progress,
+            ) {
                 Ok(()) => emit("launching", "已拉起系统安装界面，请在弹窗中确认安装"),
                 Err(e) => emit(
                     "error",
@@ -353,32 +379,112 @@ fn install_apk(app: tauri::AppHandle, url: String) -> Result<(), String> {
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (app, url);
+        let _ = (app, url, relay_url, token, expected_size);
         Err("此平台不支持应用内安装，请在对应应用商店或 Release 页更新".into())
     }
+}
+
+/// Download one APK source to `file` (via .part, renamed on success),
+/// reporting progress in whole percents at ≥10% steps.
+#[cfg(target_os = "android")]
+fn download_apk(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    bearer: Option<&str>,
+    file: &std::path::Path,
+    expected_size: u64,
+    on_progress: &dyn Fn(u8),
+) -> Result<(), String> {
+    let mut req = client.get(url);
+    if let Some(t) = bearer {
+        req = req.bearer_auth(t);
+    }
+    let mut resp = req.send().map_err(|e| format!("下载失败（网络）: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(expected_size);
+    let part = file.with_extension("part");
+    let mut out = std::fs::File::create(&part).map_err(|e| format!("写入失败: {e}"))?;
+    let mut done: u64 = 0;
+    let mut last_pct: u8 = 0;
+    use std::io::{Read, Write};
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = resp
+            .read(&mut buf)
+            .map_err(|e| format!("下载中断: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])
+            .map_err(|e| format!("写入失败: {e}"))?;
+        done += n as u64;
+        if total > 0 {
+            let pct = ((done * 100) / total).min(100) as u8;
+            if pct / 10 > last_pct / 10 {
+                last_pct = pct;
+                on_progress(pct);
+            }
+        }
+    }
+    out.flush().map_err(|e| format!("写入失败: {e}"))?;
+    drop(out);
+    std::fs::rename(&part, file).map_err(|e| format!("保存失败: {e}"))?;
+    Ok(())
 }
 
 /// Android: download the APK into the cache dir and bring up the system
 /// package installer via FileProvider + ACTION_VIEW (no browser involved).
 #[cfg(target_os = "android")]
-fn install_apk_android(url: &str, dir: &std::path::Path) -> Result<(), String> {
+fn install_apk_android(
+    url: &str,
+    relay_url: Option<&str>,
+    token: Option<&str>,
+    expected_size: u64,
+    dir: &std::path::Path,
+    on_progress: &dyn Fn(u8),
+) -> Result<(), String> {
     use jni::objects::{JClass, JObject, JValue};
 
     let file = dir.join("anka-update.apk");
-    let mut resp =
-        reqwest::blocking::get(url).map_err(|e| format!("下载失败（网络）: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("下载失败: HTTP {}", resp.status()));
+    if expected_size > 0 && file.metadata().map(|m| m.len()).ok() == Some(expected_size) {
+        on_progress(100); // 上次已下载完整包，直接进入安装
+    } else {
+        // 中转（自建服务器，局域网快）优先，GitHub 直链兜底
+        let mut candidates: Vec<(&str, Option<&str>)> = Vec::new();
+        if let Some(r) = relay_url {
+            candidates.push((r, token));
+        }
+        if Some(url) != relay_url {
+            candidates.push((url, None));
+        }
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .map_err(|e| format!("构建 HTTP 客户端失败: {e}"))?;
+        let mut last_err = String::new();
+        let mut downloaded = false;
+        for (u, auth) in candidates {
+            match download_apk(&client, u, auth, &file, expected_size, on_progress) {
+                Ok(()) => {
+                    downloaded = true;
+                    break;
+                }
+                Err(e) => last_err = e,
+            }
+        }
+        if !downloaded {
+            return Err(format!("所有下载源都失败了：{last_err}"));
+        }
     }
-    let mut out = std::fs::File::create(&file).map_err(|e| format!("写入失败: {e}"))?;
-    std::io::copy(&mut resp, &mut out).map_err(|e| format!("保存失败: {e}"))?;
-    drop(out);
     let size = file
         .metadata()
         .map_err(|e| format!("读取下载结果失败: {e}"))?
         .len();
-    if size < 1_000_000 {
-        return Err(format!("下载不完整（仅 {size} 字节），多半是网络中断，请重试"));
+    if size < 1_000_000 || (expected_size > 0 && size != expected_size) {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("下载不完整（{size} 字节），多半是网络中断，请重试"));
     }
 
     let ctx = ndk_context::android_context();

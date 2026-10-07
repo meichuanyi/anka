@@ -2,4 +2,4 @@
 
 pub mod api;
 
-pub use api::{router, AppState, Shared};
+pub use api::{app_update_router, router, AppState, Shared};

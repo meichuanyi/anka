@@ -871,6 +871,14 @@ function cmpVersion(a: string, b: string): number {
   return 0;
 }
 
+/** 服务器中转的版本信息（GET /api/app/latest）。 */
+type AppLatestRelay = {
+  tag: string;
+  version: string;
+  apkSize: number;
+  apkPath: string;
+};
+
 /** App version check + update. Desktop: Tauri updater (download+install).
  *  Mobile: compare against GitHub latest release, open the download page. */
 async function checkForUpdate(): Promise<string> {
@@ -879,36 +887,65 @@ async function checkForUpdate(): Promise<string> {
     const { getVersion } = await import("@tauri-apps/api/app");
     const current = await getVersion();
     if (isMobile) {
-      const res = await fetch(
-        "https://api.github.com/repos/meichuanyi/anka/releases/latest",
-        { headers: { accept: "application/vnd.github+json" } },
-      );
-      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-      const rel = (await res.json()) as {
+      const current = await getVersion();
+      // ① 配置了远程服务器：先问服务器（局域网快、还带缓存），手机连不上 GitHub 也能更新
+      let relay: AppLatestRelay | null = null;
+      if (useRemote()) {
+        try {
+          const res = await apiFetch("/api/app/latest");
+          if (res.ok) {
+            const j = (await res.json()) as AppLatestRelay;
+            if (j?.version) relay = j;
+          }
+        } catch {
+          /* 服务器不支持或不可达 → GitHub 直连 */
+        }
+      }
+      // ② GitHub API（版本核对 + 直链兜底）
+      let rel: {
         tag_name?: string;
         html_url?: string;
         assets?: { name: string; size: number; browser_download_url: string }[];
-      };
-      const latest = (rel.tag_name || "").replace(/^v/, "");
-      if (!latest || cmpVersion(latest, current) <= 0) return "当前已是最新版本";
-      // Prefer the slim signed build (anka-mobile-*.apk); CI's debug APK is
-      // ~220MB and signed with an ephemeral key that won't install over
-      // locally-signed builds.
-      const apks = (rel.assets || []).filter((a) => a.name.endsWith(".apk"));
-      const apk =
+      } | null = null;
+      try {
+        const res = await fetch(
+          "https://api.github.com/repos/meichuanyi/anka/releases/latest",
+          { headers: { accept: "application/vnd.github+json" } },
+        );
+        if (res.ok) rel = await res.json();
+      } catch {
+        /* 手机连不上 GitHub：只剩服务器中转 */
+      }
+      if (!relay && !rel) throw new Error("无法获取版本信息（服务器与 GitHub 都不可达）");
+      const latest = relay?.version || (rel?.tag_name || "").replace(/^v/, "");
+      if (!latest || cmpVersion(latest, current) <= 0)
+        return `当前已是最新版本（v${current}）`;
+
+      // 精简签名包优先（anka-mobile-*），其次最小的 .apk
+      const apks = (rel?.assets || []).filter((a) => a.name.endsWith(".apk"));
+      const apkAsset =
         apks.find((a) => a.name.startsWith("anka-mobile-")) ??
         apks.sort((a, b) => a.size - b.size)[0];
-      if (apk) {
+      const relayUrl = relay ? remoteConfig().base + relay.apkPath : undefined;
+      const expected = relay?.apkSize ?? apkAsset?.size ?? 0;
+      if (relayUrl || apkAsset) {
         try {
           const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("install_apk", { url: apk.browser_download_url });
-          return `新版本 v${latest}（${(apk.size / 1024 / 1024).toFixed(0)}MB）开始后台下载，完成后自动弹出安装界面；若网络不佳请耐心等待或改用浏览器下载`;
+          await invoke("install_apk", {
+            url: apkAsset?.browser_download_url ?? relayUrl!,
+            relayUrl,
+            token: useRemote() ? remoteConfig().token : undefined,
+            expectedSize: expected,
+          });
+          return `新版本 v${latest}（${(expected / 1024 / 1024).toFixed(0)}MB）开始下载${relayUrl ? "（服务器中转）" : ""}，完成后自动弹出安装界面`;
         } catch {
           /* fall through to browser */
         }
       }
       const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(rel.html_url || "https://github.com/meichuanyi/anka/releases/latest");
+      await openUrl(
+        rel?.html_url || relayUrl || "https://github.com/meichuanyi/anka/releases/latest",
+      );
       return `发现新版本 v${latest}，已打开下载页（下载 APK 后安装覆盖即可）`;
     }
     const { check } = await import("@tauri-apps/plugin-updater");
