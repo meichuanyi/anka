@@ -269,6 +269,8 @@ type AiCardCtx = {
   front: string;
   back: string;
   example?: string;
+  /** 长按选中的关键词；缺省 = 整卡提问 */
+  keyword?: string;
 };
 type AiSeedCard = { front: string; back: string; tags: string[]; deck?: string };
 let aiOpen = false;
@@ -278,12 +280,17 @@ let aiBusy = false;
 let aiError: string | null = null;
 let pendingAICard: AiSeedCard | null = null;
 
-const AI_PRESETS: Array<[string, string]> = [
-  ["详解", "请详细解释这张卡片的内容：含义、要点和常见用法。"],
-  ["例句", "请给出 5 个实用例句（附中文翻译）。"],
-  ["记忆", "请给出词源/记忆技巧/联想方法，帮助我牢牢记住。"],
-  ["辨析", "请辨析它的近义词/易混淆点，并给出对比。"],
-];
+/** 预设问题随关键词变化 */
+function aiPresets(kw?: string): Array<[string, string]> {
+  const k = kw ? `「${kw}」` : "这张卡片的内容";
+  const it = kw ? `「${kw}」` : "它";
+  return [
+    ["详解", `请详细解释${k}：含义、要点和常见用法。`],
+    ["例句", `请给出${it}的 5 个实用例句（附中文翻译）。`],
+    ["记忆", `请给出${k}的记忆技巧/联想方法/词源。`],
+    ["辨析", `请辨析${it}的近义词/易混淆点，并给出对比。`],
+  ];
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -1121,13 +1128,14 @@ function renderSession(s: Session) {
       : tpl === "dictation"
         ? "听音 → 写出单词"
         : "单词 → 回忆释义";
-  card.appendChild(el("div", "prompt", `${tip} · 长按卡片可问 AI`));
-  onLongPress(card, () =>
+  card.appendChild(el("div", "prompt", `${tip} · 长按词语问 AI`));
+  onLongPress(card, (x, y) =>
     openAiSheet({
       deckName: current.deckName,
       front: current.front,
       back: current.back,
       example: current.example || undefined,
+      keyword: keywordAtPoint(x, y),
     }),
   );
 
@@ -1180,8 +1188,9 @@ function renderSession(s: Session) {
   return host;
 }
 
-/** Fire fn after a 500ms touch long-press; desktop right-click also works. */
-function onLongPress(node: HTMLElement, fn: () => void) {
+/** Fire fn after a 500ms touch long-press; desktop right-click also works.
+ *  The press coordinates are passed so callers can resolve the tapped word. */
+function onLongPress(node: HTMLElement, fn: (x: number, y: number) => void) {
   let timer: number | null = null;
   let sx = 0;
   let sy = 0;
@@ -1200,7 +1209,7 @@ function onLongPress(node: HTMLElement, fn: () => void) {
       sy = t.clientY;
       timer = window.setTimeout(() => {
         timer = null;
-        fn();
+        fn(sx, sy);
       }, 500);
     },
     { passive: true },
@@ -1217,8 +1226,59 @@ function onLongPress(node: HTMLElement, fn: () => void) {
   node.addEventListener("touchcancel", cancel);
   node.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    fn();
+    fn(e.clientX, e.clientY);
   });
+}
+
+/** The word under the long-press point (caret hit-testing), used as the AI
+ *  keyword. Latin runs come out whole; long CJK runs collapse to a short
+ *  window around the finger. Undefined when the press missed any text. */
+function keywordAtPoint(x: number, y: number): string | undefined {
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => {
+      offsetNode: Node;
+      offset: number;
+    } | null;
+  };
+  let node: Node | null = null;
+  let offset = 0;
+  if (doc.caretRangeFromPoint) {
+    const r = doc.caretRangeFromPoint(x, y);
+    if (r) {
+      node = r.startContainer;
+      offset = r.startOffset;
+    }
+  } else if (doc.caretPositionFromPoint) {
+    const p = doc.caretPositionFromPoint(x, y);
+    if (p) {
+      node = p.offsetNode;
+      offset = p.offset;
+    }
+  }
+  if (!node || node.nodeType !== Node.TEXT_NODE) return undefined;
+  const text = node.textContent || "";
+  const isWord = (ch: string | undefined) =>
+    !!ch && /[\p{L}\p{N}'’_-]/u.test(ch);
+  let s = Math.min(offset, text.length);
+  let e = s;
+  if (isWord(text[s])) {
+    e = s + 1;
+  } else if (s > 0 && isWord(text[s - 1])) {
+    s -= 1;
+    e = s + 1;
+  } else {
+    return undefined;
+  }
+  while (e < text.length && isWord(text[e])) e += 1;
+  while (s > 0 && isWord(text[s - 1])) s -= 1;
+  let word = text.slice(s, e);
+  if (/^[\p{Script=Han}]+$/u.test(word) && word.length > 6) {
+    const c = Math.min(Math.max(offset, s + 2), e - 3);
+    word = text.slice(c - 2, c + 3);
+  }
+  word = word.trim().replace(/^[-'’_]+|[-'’_]+$/g, "");
+  return word || undefined;
 }
 
 /** Minimal, dependency-free markdown → HTML for LLM answers.
@@ -1342,7 +1402,8 @@ function aiSystemPrompt(): string {
     `正面：${c.front}`,
     `背面：${c.back || "（无）"}`,
     c.example ? `例句：${c.example}` : "",
-    "请围绕卡片内容解答提问：中文为主，简洁准确，可用换行和短列表分点，不要输出 HTML。",
+    c.keyword ? `用户长按选中了关键词：「${c.keyword}」，提问通常围绕它展开。` : "",
+    "请围绕卡片内容（及选中的关键词）解答提问：中文为主，简洁准确，用 Markdown 格式（加粗、列表等），不要输出 HTML。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -1452,7 +1513,13 @@ function renderAiSheet() {
 
   const sheet = el("div", "ai-sheet");
   const head = el("div", "ai-head");
-  head.appendChild(el("div", "ai-title", `AI 问卡 · ${aiCtx!.front.slice(0, 24)}`));
+  head.appendChild(
+    el(
+      "div",
+      "ai-title",
+      `AI 问卡 · ${aiCtx!.keyword ? `「${aiCtx!.keyword}」` : aiCtx!.front.slice(0, 24)}`,
+    ),
+  );
   const closeBtn = el("button", "nav-btn", "✕");
   closeBtn.addEventListener("click", closeAiSheet);
   head.appendChild(closeBtn);
@@ -1460,7 +1527,8 @@ function renderAiSheet() {
 
   const chat = el("div", "ai-chat");
   const intro = el("div", "ai-intro");
-  intro.textContent = `正面：${aiCtx!.front}\n背面：${aiCtx!.back || "（无）"}${aiCtx!.example ? `\n例句：${aiCtx!.example}` : ""}`;
+  intro.textContent =
+    `正面：${aiCtx!.front}\n背面：${aiCtx!.back || "（无）"}${aiCtx!.example ? `\n例句：${aiCtx!.example}` : ""}${aiCtx!.keyword ? `\n🔑 关键词：${aiCtx!.keyword}` : ""}`;
   chat.appendChild(intro);
   for (const t of aiTurns) {
     chat.appendChild(el("div", "ai-q", t.q));
@@ -1476,7 +1544,7 @@ function renderAiSheet() {
   }, 0);
 
   const chips = el("div", "ai-chips");
-  for (const [label, prompt] of AI_PRESETS) {
+  for (const [label, prompt] of aiPresets(aiCtx!.keyword)) {
     const chip = el("button", "ai-chip", label);
     chip.addEventListener("click", () => void aiAsk(prompt));
     chips.appendChild(chip);
@@ -1487,6 +1555,7 @@ function renderAiSheet() {
   const input = document.createElement("input");
   input.type = "text";
   input.placeholder = "针对这张卡片提问…";
+  if (aiCtx!.keyword) input.value = `详解「${aiCtx!.keyword}」`;
   const send = () => {
     const v = input.value;
     input.value = "";
@@ -1780,7 +1849,9 @@ function renderBrowse() {
     return panel;
   }
 
-  panel.appendChild(el("p", "form-hint", `共 ${browseTotal} 条笔记，按牌组分组 · 长按笔记可问 AI`));
+  panel.appendChild(
+    el("p", "form-hint", `共 ${browseTotal} 条笔记，按牌组分组 · 长按词语问 AI`),
+  );
 
   const byDeck = new Map<string, NoteDto[]>();
   for (const n of browseItems) {
@@ -1803,11 +1874,12 @@ function renderBrowse() {
         render();
       };
       row.append(main, edit);
-      onLongPress(row, () =>
+      onLongPress(row, (x, y) =>
         openAiSheet({
           deckName: n.deckName,
           front: n.front || n.fields[0] || "",
           back: n.back || n.fields[1] || "",
+          keyword: keywordAtPoint(x, y),
         }),
       );
       list.appendChild(row);
