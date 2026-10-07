@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use anyhow::Context as _;
 use anka_core::{
@@ -18,6 +18,35 @@ pub struct AppState {
 }
 
 pub type Shared = Arc<AppState>;
+
+/// Handler error type. axum 0.8 renders a bare `String` error as 200 OK +
+/// text/plain, which defeats every client's `res.ok` check; `ApiError`
+/// produces a real 500 so clients can branch on status and show the message.
+pub struct ApiError(pub String);
+
+impl From<String> for ApiError {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for ApiError {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl axum::response::IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::response::IntoResponse as _;
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            [("content-type", "text/plain; charset=utf-8")],
+            self.0,
+        )
+            .into_response()
+    }
+}
 
 fn lock_col(state: &Shared) -> Result<std::sync::MutexGuard<'_, Collection>, String> {
     state
@@ -46,7 +75,7 @@ struct AnkiwebImportReq {
 async fn ankiweb_import(
     State(state): State<Shared>,
     Json(req): Json<AnkiwebImportReq>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let state = state.clone();
     let report = tokio::task::spawn_blocking(move || {
         let data = match &req.hkey {
@@ -100,7 +129,7 @@ struct DailyStat {
 async fn stats_daily(
     State(state): State<Shared>,
     Query(params): Query<std::collections::HashMap<String, u32>>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let days = params.get("days").copied().unwrap_or(120).clamp(7, 365);
     let mut col = state.collection.lock().map_err(|_| "lock".to_string())?;
     let reviews = col.review_daily(days).map_err(|e| e.to_string())?;
@@ -122,7 +151,7 @@ async fn stats_daily(
 
 async fn ankiweb_login(
     Json(req): Json<AnkiwebLoginReq>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     // blocking reqwest must not run on the async runtime
     let hkey = tokio::task::spawn_blocking(move || {
         anka_ankiweb::login(&req.user, &req.password).map_err(|e| e.to_string())
@@ -147,7 +176,7 @@ struct AiChatBody {
 /// Proxy a chat completion to an OpenAI-compatible endpoint. The client's
 /// AI config rides in the body and is never persisted; empty fields fall
 /// back to server-side env (ANKA_AI_BASE_URL / ANKA_AI_KEY / ANKA_AI_MODEL).
-async fn ai_chat(Json(req): Json<AiChatBody>) -> Result<Json<serde_json::Value>, String> {
+async fn ai_chat(Json(req): Json<AiChatBody>) -> Result<Json<serde_json::Value>, ApiError> {
     let env = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
     let cfg = anka_ai::AiConfig {
         base_url: req
@@ -179,7 +208,7 @@ async fn ai_chat(Json(req): Json<AiChatBody>) -> Result<Json<serde_json::Value>,
 async fn ankiweb_sync(
     State(state): State<Shared>,
     Json(req): Json<AnkiwebSyncReq>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let agent_bin = std::env::current_exe()
         .map_err(|e| e.to_string())?
         .parent()
@@ -230,6 +259,7 @@ pub fn router(state: Shared) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/decks", get(list_decks))
+        .route("/api/decks/{id}", delete(delete_deck))
         .route("/api/due", get(due_cards))
         .route("/api/grade", post(grade_card))
         .route("/api/notes", get(search_notes).post(create_note))
@@ -283,7 +313,7 @@ pub struct DueCardDto {
     kind: String,
 }
 
-async fn list_decks(State(state): State<Shared>) -> Result<Json<Vec<DeckCountsDto>>, String> {
+async fn list_decks(State(state): State<Shared>) -> Result<Json<Vec<DeckCountsDto>>, ApiError> {
     let col = lock_col(&state)?;
     let counts = col.deck_counts().map_err(|e| e.to_string())?;
     Ok(Json(
@@ -300,6 +330,26 @@ async fn list_decks(State(state): State<Shared>) -> Result<Json<Vec<DeckCountsDt
     ))
 }
 
+/// Delete a deck; notes, cards and review history go with it (irreversible).
+async fn delete_deck(
+    State(state): State<Shared>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let mut col = lock_col_mut(&state)?;
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let report = col
+        .delete_deck(Id::from(uuid))
+        .map_err(|e| e.to_string())?;
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "id": id,
+        "name": report.name,
+        "notes": report.notes,
+        "cards": report.cards,
+        "revlogs": report.revlogs,
+    })))
+}
+
 #[derive(Deserialize)]
 struct DueQuery {
     deck: Option<String>,
@@ -309,7 +359,7 @@ struct DueQuery {
 async fn due_cards(
     State(state): State<Shared>,
     Query(q): Query<DueQuery>,
-) -> Result<Json<Vec<DueCardDto>>, String> {
+) -> Result<Json<Vec<DueCardDto>>, ApiError> {
     let col = lock_col(&state)?;
     let deck_id = match q.deck.as_deref() {
         Some(name) if !name.is_empty() => {
@@ -317,7 +367,7 @@ async fn due_cards(
             let found = decks.into_iter().find(|d| d.name == name);
             match found {
                 Some(d) => Some(d.id),
-                None => return Err(format!("牌组不存在: {name}")),
+                None => return Err(format!("牌组不存在: {name}").into()),
             }
         }
         _ => None,
@@ -405,7 +455,7 @@ struct GradeResult {
 async fn grade_card(
     State(state): State<Shared>,
     Json(body): Json<GradeBody>,
-) -> Result<Json<GradeResult>, String> {
+) -> Result<Json<GradeResult>, ApiError> {
     let mut col = lock_col_mut(&state)?;
     let rating = Rating::from_u8(body.rating).ok_or_else(|| "评分必须是 1-4".to_string())?;
     let uuid = Uuid::parse_str(&body.card_id).map_err(|e| e.to_string())?;
@@ -461,7 +511,7 @@ struct NotesQuery {
 async fn search_notes(
     State(state): State<Shared>,
     Query(q): Query<NotesQuery>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let col = lock_col(&state)?;
     let (total, notes) = col
         .search_notes(q.q.as_deref().unwrap_or(""), q.limit.unwrap_or(30), 0)
@@ -486,7 +536,7 @@ struct CreateNoteBody {
 async fn create_note(
     State(state): State<Shared>,
     Json(body): Json<CreateNoteBody>,
-) -> Result<Json<NoteDto>, String> {
+) -> Result<Json<NoteDto>, ApiError> {
     let mut col = lock_col_mut(&state)?;
     let deck = col.ensure_deck(&body.deck).map_err(|e| e.to_string())?;
     let (note, _card) = col
@@ -496,14 +546,14 @@ async fn create_note(
             body.tags,
         )
         .map_err(|e| e.to_string())?;
-    note_to_dto(&col, note)
+    note_to_dto(&col, note).map_err(ApiError)
         .map(Json)
 }
 
 async fn get_note(
     State(state): State<Shared>,
     Path(id): Path<String>,
-) -> Result<Json<NoteDto>, String> {
+) -> Result<Json<NoteDto>, ApiError> {
     let col = lock_col(&state)?;
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let note = col
@@ -525,7 +575,7 @@ async fn update_note(
     State(state): State<Shared>,
     Path(id): Path<String>,
     Json(body): Json<UpdateNoteBody>,
-) -> Result<Json<NoteDto>, String> {
+) -> Result<Json<NoteDto>, ApiError> {
     if body.fields.iter().all(|f| f.trim().is_empty()) {
         return Err("字段不能全为空".into());
     }
@@ -534,5 +584,5 @@ async fn update_note(
     let note = col
         .update_note_fields(Id::from(uuid), body.fields, body.tags)
         .map_err(|e| e.to_string())?;
-    note_to_dto(&col, note).map(Json)
+    note_to_dto(&col, note).map_err(ApiError).map(Json)
 }

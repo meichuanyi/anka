@@ -153,9 +153,15 @@ const api = {
         messages,
       }),
     });
-    if (!res.ok) throw new Error(await res.text());
-    const j = (await res.json()) as { text: string };
-    return j.text;
+    // 服务器可能返回 200 + 纯文本错误（旧版 axum 行为），文本优先、解析兜底
+    const raw = await res.text();
+    try {
+      const j = JSON.parse(raw) as { text?: string };
+      if (typeof j.text === "string" && j.text) return j.text;
+    } catch {
+      /* not JSON → plain-text error detail below */
+    }
+    throw new Error(raw || `HTTP ${res.status}`);
   },
 };
 
