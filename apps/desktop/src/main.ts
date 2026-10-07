@@ -1409,9 +1409,46 @@ function renderMarkdown(src: string): string {
   return out.join("");
 }
 
+/** 每张卡（+关键词）一份对话历史，存 localStorage，重开面板自动恢复 */
+function aiConvKey(ctx: AiCardCtx): string {
+  return `${ctx.deckName}\u0000${ctx.front}\u0000${ctx.keyword ?? ""}`;
+}
+
+function aiHistoryLoad(key: string): { keyword?: string; turns: AiTurn[]; ts: number } | undefined {
+  try {
+    const all = JSON.parse(localStorage.getItem("anka.aiHistory") || "{}") as Record<
+      string,
+      { keyword?: string; turns: AiTurn[]; ts: number }
+    >;
+    return all[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function aiHistorySave(
+  key: string,
+  conv: { keyword?: string; turns: AiTurn[]; ts: number },
+) {
+  try {
+    const all = JSON.parse(localStorage.getItem("anka.aiHistory") || "{}") as Record<
+      string,
+      { keyword?: string; turns: AiTurn[]; ts: number }
+    >;
+    all[key] = conv;
+    // 只留最近 50 份对话，防止无限膨胀
+    const kept = Object.entries(all)
+      .sort((a, b) => (b[1].ts ?? 0) - (a[1].ts ?? 0))
+      .slice(0, 50);
+    localStorage.setItem("anka.aiHistory", JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    /* 存储不可用/已满：历史是附属品，静默放弃 */
+  }
+}
+
 function openAiSheet(ctx: AiCardCtx) {
   aiCtx = ctx;
-  aiTurns = [];
+  aiTurns = aiHistoryLoad(aiConvKey(ctx))?.turns ?? [];
   aiError = null;
   aiOpen = true;
   render();
@@ -1455,6 +1492,13 @@ async function aiAsk(question: string) {
   try {
     const a = await api.aiChat(messages);
     aiTurns.push({ q, a });
+    if (aiCtx) {
+      aiHistorySave(aiConvKey(aiCtx), {
+        keyword: aiCtx.keyword,
+        turns: aiTurns,
+        ts: Date.now(),
+      });
+    }
   } catch (e) {
     aiError = e instanceof Error ? e.message : String(e);
   } finally {
@@ -1572,6 +1616,20 @@ function renderAiSheet() {
   }, 0);
 
   const chips = el("div", "ai-chips");
+  const newBtn = el("button", "ai-chip", "新对话");
+  newBtn.addEventListener("click", () => {
+    aiTurns = [];
+    aiError = null;
+    if (aiCtx) {
+      aiHistorySave(aiConvKey(aiCtx), {
+        keyword: aiCtx.keyword,
+        turns: [],
+        ts: Date.now(),
+      });
+    }
+    render();
+  });
+  chips.appendChild(newBtn);
   for (const [label, prompt] of aiPresets(aiCtx!.keyword)) {
     const chip = el("button", "ai-chip", label);
     chip.addEventListener("click", () => void aiAsk(prompt));
