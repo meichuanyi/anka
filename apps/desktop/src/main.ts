@@ -1132,10 +1132,12 @@ function renderSession(s: Session) {
   );
 
   if (s.revealed) {
-    const answer = el("div", "answer");
-    answer.appendChild(document.createTextNode(current.back || "（无释义）"));
+    const answer = el("div", "answer md");
+    answer.innerHTML = renderMarkdown(current.back || "（无释义）");
     if (current.example) {
-      answer.appendChild(el("div", "example", current.example));
+      const ex = el("div", "example md");
+      ex.innerHTML = renderMarkdown(current.example);
+      answer.appendChild(ex);
     }
     const meta = el("div", "meta-row");
     const next = s.lastGrade
@@ -1217,6 +1219,106 @@ function onLongPress(node: HTMLElement, fn: () => void) {
     e.preventDefault();
     fn();
   });
+}
+
+/** Minimal, dependency-free markdown → HTML for LLM answers.
+ *  All HTML is escaped first, so the output is safe to inject. */
+function renderMarkdown(src: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (s: string) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(
+        /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>',
+      );
+
+  // fenced code blocks become placeholders so their content is not transformed
+  const codeBlocks: string[] = [];
+  const work = src
+    .replace(/\r\n/g, "\n")
+    .replace(/```[a-zA-Z0-9+-]*\n?([\s\S]*?)```/g, (_m, code: string) => {
+      codeBlocks.push(
+        `<pre><code>${esc(code.replace(/\n$/, ""))}</code></pre>`,
+      );
+      return `\u0000${codeBlocks.length - 1}\u0000`;
+    });
+
+  const lines = work.split("\n");
+  const out: string[] = [];
+  let list: "ul" | "ol" | null = null;
+  let para: string[] = [];
+  const closeList = () => {
+    if (list) {
+      out.push(`</${list}>`);
+      list = null;
+    }
+  };
+  const flushPara = () => {
+    if (para.length) {
+      out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+      para = [];
+    }
+  };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      closeList();
+      continue;
+    }
+    const ph = line.match(/^\u0000(\d+)\u0000$/);
+    if (ph) {
+      flushPara();
+      closeList();
+      out.push(codeBlocks[Number(ph[1])]!);
+      continue;
+    }
+    const h = line.match(/^#{1,6}\s+(.*)$/);
+    if (h) {
+      flushPara();
+      closeList();
+      out.push(`<p><strong>${inline(h[1]!)}</strong></p>`);
+      continue;
+    }
+    const ul = line.match(/^[-•]\s+(.*)$/);
+    if (ul) {
+      flushPara();
+      if (list !== "ul") {
+        closeList();
+        out.push("<ul>");
+        list = "ul";
+      }
+      out.push(`<li>${inline(ul[1]!)}</li>`);
+      continue;
+    }
+    const ol = line.match(/^\d+[.、)]\s+(.*)$/);
+    if (ol) {
+      flushPara();
+      if (list !== "ol") {
+        closeList();
+        out.push("<ol>");
+        list = "ol";
+      }
+      out.push(`<li>${inline(ol[1]!)}</li>`);
+      continue;
+    }
+    const bq = line.match(/^>\s?(.*)$/);
+    if (bq) {
+      flushPara();
+      closeList();
+      out.push(`<blockquote>${inline(bq[1]!)}</blockquote>`);
+      continue;
+    }
+    closeList();
+    para.push(line);
+  }
+  flushPara();
+  closeList();
+  return out.join("");
 }
 
 function openAiSheet(ctx: AiCardCtx) {
@@ -1362,7 +1464,9 @@ function renderAiSheet() {
   chat.appendChild(intro);
   for (const t of aiTurns) {
     chat.appendChild(el("div", "ai-q", t.q));
-    chat.appendChild(el("div", "ai-a", t.a));
+    const a = el("div", "ai-a md");
+    a.innerHTML = renderMarkdown(t.a);
+    chat.appendChild(a);
   }
   if (aiBusy) chat.appendChild(el("div", "ai-typing", "思考中…"));
   if (aiError) chat.appendChild(el("div", "ai-error", aiError));
