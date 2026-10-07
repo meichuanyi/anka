@@ -1172,7 +1172,7 @@ function renderSession(s: Session) {
       front: current.front,
       back: current.back,
       example: current.example || undefined,
-      keyword: keywordAtPoint(x, y),
+      keyword: keywordAtPointIn(card, x, y),
     }),
   );
 
@@ -1267,55 +1267,46 @@ function onLongPress(node: HTMLElement, fn: (x: number, y: number) => void) {
   });
 }
 
-/** The word under the long-press point (caret hit-testing), used as the AI
- *  keyword. Latin runs come out whole; long CJK runs collapse to a short
- *  window around the finger. Undefined when the press missed any text. */
-function keywordAtPoint(x: number, y: number): string | undefined {
-  const doc = document as Document & {
-    caretRangeFromPoint?: (x: number, y: number) => Range | null;
-    caretPositionFromPoint?: (x: number, y: number) => {
-      offsetNode: Node;
-      offset: number;
-    } | null;
-  };
-  let node: Node | null = null;
-  let offset = 0;
-  if (doc.caretRangeFromPoint) {
-    const r = doc.caretRangeFromPoint(x, y);
-    if (r) {
-      node = r.startContainer;
-      offset = r.startOffset;
+/** The word under the long-press point, used as the AI keyword.
+ *  Scans every text node under `root` and tests each word's on-screen rect
+ *  against (x, y) — unlike caretRangeFromPoint this ignores user-select,
+ *  which otherwise makes hit-testing miss the whole card on WebViews.
+ *  Latin runs come out whole; long CJK runs collapse to a short window
+ *  around the finger. Undefined when the press missed any text. */
+function keywordAtPointIn(
+  root: HTMLElement,
+  x: number,
+  y: number,
+): string | undefined {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const re = /[\p{L}\p{N}'’_-]+/gu;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent || "";
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const range = document.createRange();
+      range.setStart(node, m.index);
+      range.setEnd(node, m.index + m[0].length);
+      const r = range.getBoundingClientRect();
+      range.detach?.();
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+      let word = m[0];
+      if (/^[\p{Script=Han}]+$/u.test(word) && word.length > 6) {
+        // 中文无词边界：按横向位置取按压点附近的 5 字窗口
+        const ratio = (x - r.left) / Math.max(r.width, 1);
+        const c =
+          m.index +
+          Math.min(
+            Math.max(Math.floor(ratio * m[0].length), 2),
+            m[0].length - 3,
+          );
+        word = text.slice(c - 2, c + 3);
+      }
+      word = word.trim().replace(/^[-'’_]+|[-'’_]+$/g, "");
+      return word || undefined;
     }
-  } else if (doc.caretPositionFromPoint) {
-    const p = doc.caretPositionFromPoint(x, y);
-    if (p) {
-      node = p.offsetNode;
-      offset = p.offset;
-    }
   }
-  if (!node || node.nodeType !== Node.TEXT_NODE) return undefined;
-  const text = node.textContent || "";
-  const isWord = (ch: string | undefined) =>
-    !!ch && /[\p{L}\p{N}'’_-]/u.test(ch);
-  let s = Math.min(offset, text.length);
-  let e = s;
-  if (isWord(text[s])) {
-    e = s + 1;
-  } else if (s > 0 && isWord(text[s - 1])) {
-    s -= 1;
-    e = s + 1;
-  } else {
-    return undefined;
-  }
-  while (e < text.length && isWord(text[e])) e += 1;
-  while (s > 0 && isWord(text[s - 1])) s -= 1;
-  let word = text.slice(s, e);
-  if (/^[\p{Script=Han}]+$/u.test(word) && word.length > 6) {
-    const c = Math.min(Math.max(offset, s + 2), e - 3);
-    word = text.slice(c - 2, c + 3);
-  }
-  word = word.trim().replace(/^[-'’_]+|[-'’_]+$/g, "");
-  return word || undefined;
+  return undefined;
 }
 
 /** Minimal, dependency-free markdown → HTML for LLM answers.
@@ -1916,7 +1907,7 @@ function renderBrowse() {
           deckName: n.deckName,
           front: n.front || n.fields[0] || "",
           back: n.back || n.fields[1] || "",
-          keyword: keywordAtPoint(x, y),
+          keyword: keywordAtPointIn(row, x, y),
         }),
       );
       list.appendChild(row);
