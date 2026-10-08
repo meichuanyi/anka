@@ -666,6 +666,67 @@ function renderSettings() {
   aiActions.append(aiClear, aiSave);
   panel.appendChild(aiActions);
 
+  // ---------- ④ 每日学习提醒（Android 系统通知） ----------
+  if (isTauri() && /android|ios/i.test(navigator.userAgent)) {
+    panel.appendChild(el("h2", undefined, "④ 每日学习提醒"));
+    panel.appendChild(
+      el(
+        "p",
+        "settings-hint",
+        "到点发系统通知提醒背卡（App 没开也会提醒，点通知直接进复习）。保存时如弹出通知权限，请选择允许。",
+      ),
+    );
+    let savedRem: { enabled?: boolean; time?: string } = {};
+    try {
+      savedRem = JSON.parse(localStorage.getItem("anka.reminder") || "{}");
+    } catch {
+      /* 默认值 */
+    }
+    const remCard = el("div", "subcard");
+    const row = el("label", "field");
+    row.appendChild(el("span", undefined, "提醒时间"));
+    const time = document.createElement("input");
+    time.type = "time";
+    time.value = savedRem.time || "20:30";
+    row.appendChild(time);
+    remCard.appendChild(row);
+    const on = document.createElement("label");
+    on.style.cssText = "display:flex;align-items:center;gap:8px;font-size:13px;color:var(--paper);";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!savedRem.enabled;
+    on.append(cb, document.createTextNode("开启每日提醒"));
+    remCard.appendChild(on);
+    panel.appendChild(remCard);
+    const remActions = el("div", "form-actions");
+    const remSave = el("button", "reveal", "保存提醒设置");
+    remSave.onclick = async () => {
+      const timeStr = time.value || "20:30";
+      const [h, m] = timeStr.split(":").map(Number);
+      const enabledNow = cb.checked;
+      loading = true;
+      error = null;
+      render();
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("reminder_set", { hour: h || 20, minute: m || 0, enabled: enabledNow });
+        localStorage.setItem(
+          "anka.reminder",
+          JSON.stringify({ enabled: enabledNow, time: timeStr }),
+        );
+        flash = enabledNow ? `每日 ${timeStr} 提醒已开启` : "每日提醒已关闭";
+        loading = false;
+        render();
+      } catch (e) {
+        loading = false;
+        error = e instanceof Error ? e.message : String(e);
+        render();
+      }
+    };
+    remActions.appendChild(remSave);
+    panel.appendChild(remActions);
+  }
+
   // ---------- 检查更新 ----------
   const upd = el("div", "subcard");
   upd.appendChild(el("h2", undefined, "检查更新"));

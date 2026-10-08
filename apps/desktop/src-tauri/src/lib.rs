@@ -592,6 +592,135 @@ fn install_apk_android(
 }
 
 #[tauri::command]
+fn reminder_set(hour: u8, minute: u8, enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        android_reminder_set(hour, minute, enabled)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (hour, minute, enabled);
+        Err("每日提醒目前仅支持 Android 端".into())
+    }
+}
+
+/// 每日学习提醒：把配置写入 SharedPreferences，请求通知权限（Android 13+），
+/// 再让 Kotlin 端调度/取消 AlarmManager 闹钟。Receiver 触发后自我续订，
+/// BootReceiver 在重启后恢复，因此只需在用户改设置时调用一次。
+#[cfg(target_os = "android")]
+fn android_reminder_set(hour: u8, minute: u8, enabled: bool) -> Result<(), String> {
+    use jni::objects::{JClass, JObject, JValue};
+
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| format!("vm: {e}"))?;
+    let mut env = vm.attach_current_thread().map_err(|e| format!("attach: {e}"))?;
+    let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+    fn jstr<'e>(
+        env: &mut jni::JNIEnv<'e>,
+        s: &str,
+    ) -> Result<jni::objects::JString<'e>, String> {
+        env.new_string(s).map_err(|e| format!("new_string: {e}"))
+    }
+    macro_rules! call {
+        ($obj:expr, $name:expr, $sig:expr) => {
+            env.call_method($obj, $name, $sig, &[])
+                .map_err(|e| format!("{}: {}", $name, e))?
+                .l()
+                .map_err(|e| format!("{}: {}", $name, e))?
+        };
+        ($obj:expr, $name:expr, $sig:expr, $($arg:expr),+ $(,)?) => {
+            env.call_method($obj, $name, $sig, &[$($arg),+])
+                .map_err(|e| format!("{}: {}", $name, e))?
+                .l()
+                .map_err(|e| format!("{}: {}", $name, e))?
+        };
+    }
+
+    // 1) 写 SharedPreferences（Kotlin 端读这里）
+    let prefs_name = jstr(&mut env, "anka_prefs")?;
+    let sp = call!(
+        &activity,
+        "getSharedPreferences",
+        "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
+        JValue::Object(&prefs_name),
+        JValue::Int(0)
+    );
+    let editor = call!(
+        &sp,
+        "edit",
+        "()Landroid/content/SharedPreferences$Editor;"
+    );
+    let k_en = jstr(&mut env, "reminderEnabled")?;
+    call!(
+        &editor,
+        "putBoolean",
+        "(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;",
+        JValue::Object(&k_en),
+        JValue::Bool(enabled as u8)
+    );
+    let k_h = jstr(&mut env, "reminderHour")?;
+    call!(
+        &editor,
+        "putInt",
+        "(Ljava/lang/String;I)Landroid/content/SharedPreferences$Editor;",
+        JValue::Object(&k_h),
+        JValue::Int(hour as i32)
+    );
+    let k_m = jstr(&mut env, "reminderMinute")?;
+    call!(
+        &editor,
+        "putInt",
+        "(Ljava/lang/String;I)Landroid/content/SharedPreferences$Editor;",
+        JValue::Object(&k_m),
+        JValue::Int(minute as i32)
+    );
+    call!(&editor, "apply", "()V");
+
+    // 2) Android 13+ 通知运行时权限（系统弹窗；已授权则无感）
+    if enabled {
+        let perm = jstr(&mut env, "android.permission.POST_NOTIFICATIONS")?;
+        let perms = env
+            .new_object_array(1, "java/lang/String", &perm)
+            .map_err(|e| format!("new_object_array: {e}"))?;
+        call!(
+            &activity,
+            "requestPermissions",
+            "([Ljava/lang/String;I)V",
+            JValue::Object(&perms),
+            JValue::Int(1)
+        );
+    }
+
+    // 3) 调度/取消闹钟（经 app classloader 找 Kotlin 类）
+    let loader = call!(
+        &activity,
+        "getClassLoader",
+        "()Ljava/lang/ClassLoader;"
+    );
+    let cls_name = jstr(&mut env, "app.anka.desktop.ReminderReceiver")?;
+    let cls = call!(
+        &loader,
+        "loadClass",
+        "(Ljava/lang/String;)Ljava/lang/Class;",
+        JValue::Object(&cls_name)
+    );
+    env.call_static_method(
+        JClass::from(cls),
+        "scheduleOrCancel",
+        "(Landroid/content/Context;ZII)V",
+        &[
+            JValue::Object(&activity),
+            JValue::Bool(enabled as u8),
+            JValue::Int(hour as i32),
+            JValue::Int(minute as i32),
+        ],
+    )
+    .map_err(|e| format!("scheduleOrCancel: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn ai_chat(
     base_url: String,
     api_key: String,
@@ -707,6 +836,7 @@ pub fn run() {
             ankiweb_login,
             ankiweb_sync,
             ai_chat,
+            reminder_set,
             install_apk
         ])
         .run(tauri::generate_context!())
