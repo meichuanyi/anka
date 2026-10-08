@@ -15,3 +15,6 @@ media/
 *.idsig
 anka-mobile-*.apk
 .zcode/
+apps/vscode/node_modules/
+apps/vscode/out/
+apps/vscode/*.vsix

@@ -1,0 +1,140 @@
+{
+  "name": "anka",
+  "displayName": "Anka 背诵",
+  "description": "在状态栏隐蔽复习 Anka 记忆卡片（连接自建 anka-server，与手机/网页共用进度）",
+  "version": "0.1.0",
+  "publisher": "meichuanyi",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meichuanyi/anka"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Education"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Anka 背诵",
+      "properties": {
+        "anka.server": {
+          "type": "string",
+          "default": "",
+          "description": "anka-server 地址，如 http://192.168.6.100:8788（留空则不启用）"
+        },
+        "anka.token": {
+          "type": "string",
+          "default": "",
+          "description": "访问令牌（anka-server 启动日志里的 #t=…，或 ~/.secrets/anka/server-token）"
+        },
+        "anka.deck": {
+          "type": "string",
+          "default": "",
+          "description": "只复习指定牌组（空 = 全部到期卡片）"
+        },
+        "anka.revealSeconds": {
+          "type": "number",
+          "default": 8,
+          "description": "显示答案后几秒自动收回"
+        },
+        "anka.autoRefreshMinutes": {
+          "type": "number",
+          "default": 15,
+          "description": "每隔几分钟自动拉取到期卡片（0 = 关闭）"
+        },
+        "anka.pullSize": {
+          "type": "number",
+          "default": 20,
+          "description": "每次拉取多少张到期卡片"
+        },
+        "anka.showCount": {
+          "type": "boolean",
+          "default": true,
+          "description": "状态栏显示进度 N/M"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "anka.show",
+        "title": "Anka: 显示评分面板"
+      },
+      {
+        "command": "anka.reveal",
+        "title": "Anka: 显示答案（几秒后自动收回）"
+      },
+      {
+        "command": "anka.again",
+        "title": "Anka: Again 重来"
+      },
+      {
+        "command": "anka.hard",
+        "title": "Anka: Hard 困难"
+      },
+      {
+        "command": "anka.good",
+        "title": "Anka: Good 良好"
+      },
+      {
+        "command": "anka.easy",
+        "title": "Anka: Easy 简单"
+      },
+      {
+        "command": "anka.skip",
+        "title": "Anka: 跳过这张"
+      },
+      {
+        "command": "anka.refresh",
+        "title": "Anka: 重新拉取到期卡片"
+      },
+      {
+        "command": "anka.openWeb",
+        "title": "Anka: 打开网页版"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "anka.reveal",
+        "key": "ctrl+alt+space"
+      },
+      {
+        "command": "anka.again",
+        "key": "ctrl+alt+1"
+      },
+      {
+        "command": "anka.hard",
+        "key": "ctrl+alt+2"
+      },
+      {
+        "command": "anka.good",
+        "key": "ctrl+alt+3"
+      },
+      {
+        "command": "anka.easy",
+        "key": "ctrl+alt+4"
+      },
+      {
+        "command": "anka.skip",
+        "key": "ctrl+alt+right"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}
