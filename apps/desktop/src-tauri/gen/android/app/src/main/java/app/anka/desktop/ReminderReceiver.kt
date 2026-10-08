@@ -22,7 +22,7 @@ class ReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        private const val PREFS = "anka_prefs"
+        const val PREFS = "anka_prefs"
         private const val CHANNEL = "daily-reminder"
         private const val REQ_ALARM = 1001
         private const val REQ_TAP = 1002
