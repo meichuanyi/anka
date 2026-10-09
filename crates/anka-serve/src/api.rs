@@ -6,7 +6,8 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use anyhow::Context as _;
 use anka_core::{
-    extract_sounds, front_back_for_template, strip_html, CardTemplate, Collection, Id, Rating,
+    extract_images, extract_sounds, front_back_for_template, strip_html, CardTemplate, Collection,
+    Id, Rating,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -307,6 +308,8 @@ pub struct DueCardDto {
     back: String,
     example: String,
     sounds: Vec<String>,
+    images_front: Vec<String>,
+    images_back: Vec<String>,
     template: String,
     stability: f32,
     lapses: u32,
@@ -416,6 +419,7 @@ async fn due_cards(
                     })
                     .unwrap_or_default();
                 let sounds = extract_sounds(&item.note.fields);
+                let (images_front, images_back) = extract_images(&item.note.fields);
                 DueCardDto {
                     card_id: item.card.id.to_string(),
                     deck_id: item.card.deck_id.to_string(),
@@ -425,6 +429,8 @@ async fn due_cards(
                     back,
                     example,
                     sounds,
+                    images_front,
+                    images_back,
                     template: template.as_str().to_string(),
                     stability: item.card.state.stability,
                     lapses: item.card.state.lapses,

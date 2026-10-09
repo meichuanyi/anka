@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use anka_core::{
-    extract_sounds, front_back_for_template, media_dir_for_collection, strip_html, CardTemplate,
+    extract_images, extract_sounds, front_back_for_template, media_dir_for_collection, strip_html,
+    CardTemplate,
     Collection, Rating,
 };
 use serde::Serialize;
@@ -35,6 +36,8 @@ pub struct DueCardDto {
     example: String,
     /// Absolute filesystem paths (frontend uses convertFileSrc / file URL).
     sounds: Vec<String>,
+    images_front: Vec<String>,
+    images_back: Vec<String>,
     template: String,
     stability: f32,
     lapses: u32,
@@ -124,6 +127,13 @@ fn due_cards(
                     media_dir.join(safe).to_string_lossy().into_owned()
                 })
                 .collect();
+            let to_media_path = |name: &str| {
+                let safe = name.replace(['/', '\\'], "_");
+                media_dir.join(safe).to_string_lossy().into_owned()
+            };
+            let (images_front, images_back) = extract_images(&item.note.fields);
+            let images_front: Vec<String> = images_front.iter().map(|n| to_media_path(n)).collect();
+            let images_back: Vec<String> = images_back.iter().map(|n| to_media_path(n)).collect();
             DueCardDto {
                 card_id: item.card.id.to_string(),
                 deck_id: item.card.deck_id.to_string(),
@@ -133,6 +143,8 @@ fn due_cards(
                 back,
                 example,
                 sounds,
+                images_front,
+                images_back,
                 template: template.as_str().to_string(),
                 stability: item.card.state.stability,
                 lapses: item.card.state.lapses,

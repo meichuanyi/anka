@@ -391,6 +391,53 @@ pub fn extract_sounds(fields: &[String]) -> Vec<String> {
     out
 }
 
+/// Extract `<img src="...">` filenames from one field's HTML.
+fn img_srcs(field: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = field;
+    while let Some(pos) = rest.find("<img") {
+        let after = &rest[pos..];
+        let end = match after.find('>') {
+            Some(e) => e,
+            None => break,
+        };
+        let tag = &after[..=end];
+        if let Some(src_pos) = tag.find("src=") {
+            let after_src = &tag[src_pos + 4..];
+            let quote = after_src.chars().next();
+            if quote == Some('"') || quote == Some('\'') {
+                let after_q = &after_src[1..];
+                if let Some(qend) = after_q.find(quote.unwrap()) {
+                    let name = after_q[..qend].trim();
+                    if !name.is_empty() && !out.iter().any(|s| s == name) {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+        }
+        rest = &after[end + 1..];
+    }
+    out
+}
+
+/// Extract card images split by side: front = images inside the first
+/// non-empty field (the prompt, e.g. picture-word decks), back = the rest.
+/// Values are bare media filenames, same convention as [`extract_sounds`].
+pub fn extract_images(fields: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut front = Vec::new();
+    let mut back = Vec::new();
+    let first_non_empty = fields.iter().position(|f| !f.trim().is_empty());
+    for (i, field) in fields.iter().enumerate() {
+        for name in img_srcs(field) {
+            let side: &mut Vec<String> = if Some(i) == first_non_empty { &mut front } else { &mut back };
+            if !side.iter().any(|x| x.as_str() == name) {
+                side.push(name);
+            }
+        }
+    }
+    (front, back)
+}
+
 /// Absolute media directory for a collection path (`<parent>/media`).
 pub fn media_dir_for_collection(collection_path: &std::path::Path) -> std::path::PathBuf {
     collection_path
@@ -406,4 +453,13 @@ pub struct DeckCounts {
     pub new_count: u64,
     pub learning_count: u64,
     pub review_count: u64,
+}
+
+/// What a deck deletion cascade-removed, for callers to report back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeckDeleteReport {
+    pub name: String,
+    pub notes: u64,
+    pub cards: u64,
+    pub revlogs: u64,
 }

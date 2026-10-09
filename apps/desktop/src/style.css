@@ -889,3 +889,16 @@ svg .note-front, svg text { font-family: inherit; }
 .answer.md a {
   color: #2a6fd0;
 }
+
+/* 卡片图片（正面题图 / 答案区配图） */
+.card-img {
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 14px;
+  align-self: flex-start;
+}
+
+.answer .card-img {
+  margin-top: 12px;
+}

@@ -17,6 +17,8 @@ type DueCard = {
   back: string;
   example: string;
   sounds: string[];
+  imagesFront?: string[];
+  imagesBack?: string[];
   template?: string;
   stability: number;
   lapses: number;
@@ -1216,6 +1218,14 @@ function renderSession(s: Session) {
   const soundBtn = renderSoundButton(current);
   if (soundBtn) headRow.appendChild(soundBtn);
   card.appendChild(headRow);
+  for (const img of current.imagesFront ?? []) {
+    const im = document.createElement("img");
+    im.className = "card-img";
+    im.src = mediaUrl(img);
+    im.alt = "";
+    im.onerror = () => im.remove();
+    card.appendChild(im);
+  }
   if (current.phonetic) {
     card.appendChild(el("div", "phonetic", current.phonetic));
   }
@@ -1240,6 +1250,14 @@ function renderSession(s: Session) {
   if (s.revealed) {
     const answer = el("div", "answer md");
     answer.innerHTML = renderMarkdown(current.back || "（无释义）");
+    for (const img of current.imagesBack ?? []) {
+      const im = document.createElement("img");
+      im.className = "card-img";
+      im.src = mediaUrl(img);
+      im.alt = "";
+      im.onerror = () => im.remove();
+      answer.appendChild(im);
+    }
     if (current.example) {
       const ex = el("div", "example md");
       ex.innerHTML = renderMarkdown(current.example);
