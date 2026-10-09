@@ -902,3 +902,9 @@ svg .note-front, svg text { font-family: inherit; }
 .answer .card-img {
   margin-top: 12px;
 }
+
+.img-pick-btn {
+  align-self: flex-start;
+  margin-top: 6px;
+  font-size: 12px;
+}

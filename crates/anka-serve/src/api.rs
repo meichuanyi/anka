@@ -264,6 +264,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/due", get(due_cards))
         .route("/api/grade", post(grade_card))
         .route("/api/notes", get(search_notes).post(create_note))
+        .route("/api/media/upload", post(media_upload))
         .route("/api/notes/{id}", get(get_note).put(update_note))
         .route("/api/ankiweb/import", post(ankiweb_import))
         .route("/api/stats/daily", get(stats_daily))
@@ -591,6 +592,31 @@ async fn update_note(
         .update_note_fields(Id::from(uuid), body.fields, body.tags)
         .map_err(|e| e.to_string())?;
     note_to_dto(&col, note).map_err(ApiError).map(Json)
+}
+
+/// Insert an image into the collection's media dir and return the stored
+/// filename. Body is the raw bytes; the extension comes from the query
+/// (png/jpg/jpeg/gif/webp, defaulted to png) — sanitize everything.
+async fn media_upload(
+    State(state): State<Shared>,
+    Query(p): Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.is_empty() {
+        return Err("图片内容为空".into());
+    }
+    if body.len() > 8 * 1024 * 1024 {
+        return Err("图片超过 8MB".into());
+    }
+    let ext = match p.get("ext").map(|s| s.to_lowercase()) {
+        Some(e) if ["png", "jpg", "jpeg", "gif", "webp"].contains(&e.as_str()) => e,
+        _ => "png".to_string(),
+    };
+    let dir = anka_core::media_dir_for_collection(&state.path);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建 media 目录: {e}"))?;
+    let name = format!("upload-{}.{ext}", uuid::Uuid::new_v4().simple());
+    std::fs::write(dir.join(&name), &body).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(Json(serde_json::json!({ "name": name })))
 }
 
 /* ---------- App 更新中转（学 HarnessGate）：手机直连 GitHub 慢/不稳，

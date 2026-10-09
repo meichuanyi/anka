@@ -603,6 +603,31 @@ fn install_apk_android(
     Ok(())
 }
 
+/// 本地模式：把图片字节存进收藏 media 目录，返回文件名（配合前端 <img src>）。
+#[tauri::command]
+fn media_upload_local(
+    state: State<'_, AppState>,
+    data: Vec<u8>,
+    ext: String,
+) -> Result<serde_json::Value, String> {
+    if data.is_empty() {
+        return Err("图片内容为空".into());
+    }
+    if data.len() > 8 * 1024 * 1024 {
+        return Err("图片超过 8MB".into());
+    }
+    let ext = if ["png", "jpg", "jpeg", "gif", "webp"].contains(&ext.as_str()) {
+        ext
+    } else {
+        "png".to_string()
+    };
+    let dir = media_dir_for_collection(&state.path);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建 media 目录: {e}"))?;
+    let name = format!("upload-{}.{}", uuid::Uuid::new_v4().simple(), ext);
+    std::fs::write(dir.join(&name), &data).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(serde_json::json!({ "name": name }))
+}
+
 #[tauri::command]
 fn reminder_set(hour: u8, minute: u8, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "android")]
@@ -849,6 +874,7 @@ pub fn run() {
             ankiweb_sync,
             ai_chat,
             reminder_set,
+            media_upload_local,
             install_apk
         ])
         .run(tauri::generate_context!())

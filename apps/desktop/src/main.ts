@@ -133,6 +133,29 @@ const api = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+  async uploadImage(data: Uint8Array, ext: string): Promise<string> {
+    if (native()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const r = await invoke<{ name: string }>("media_upload_local", {
+        data: Array.from(data),
+        ext,
+      });
+      return r.name;
+    }
+    const res = await apiFetch(`/api/media/upload?ext=${encodeURIComponent(ext)}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: data as BodyInit,
+    });
+    const raw = await res.text();
+    try {
+      const j = JSON.parse(raw) as { name?: string };
+      if (typeof j.name === "string") return j.name;
+    } catch {
+      /* fall through */
+    }
+    throw new Error(raw || `HTTP ${res.status}`);
+  },
   async aiChat(messages: { role: string; content: string }[]): Promise<string> {
     const cfg = aiConfig();
     if (native()) {
@@ -1842,6 +1865,47 @@ function fieldInput(label: string, value: string, multiline = false) {
   return { wrap, input };
 }
 
+/** 表单字段旁的「插图」按钮：选图（手机拉相册）→ 上传 media → 光标处插 <img src>。 */
+function attachImagePicker(
+  target: HTMLInputElement | HTMLTextAreaElement,
+  wrap: HTMLElement,
+) {
+  const btn = el("button", "nav-btn img-pick-btn", "🖼 插图");
+  btn.type = "button";
+  const file = document.createElement("input");
+  file.type = "file";
+  file.accept = "image/png,image/jpeg,image/gif,image/webp";
+  file.style.display = "none";
+  file.addEventListener("change", async () => {
+    const f = file.files?.[0];
+    file.value = "";
+    if (!f) return;
+    const ext = (f.name.split(".").pop() || "png").toLowerCase();
+    btn.disabled = true;
+    btn.textContent = "上传中…";
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const name = await api.uploadImage(buf, ext);
+      const tag = `<img src="${name}">`;
+      const start = target.selectionStart ?? target.value.length;
+      const end = target.selectionEnd ?? start;
+      target.value = target.value.slice(0, start) + tag + target.value.slice(end);
+      target.focus();
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      flash = "图片已插入，保存后生效";
+      render();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      render();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "🖼 插图";
+    }
+  });
+  btn.addEventListener("click", () => file.click());
+  wrap.append(btn, file);
+}
+
 function renderAddForm() {
   const aiSeed = pendingAICard;
   const panel = el("div", "form-panel");
@@ -1856,6 +1920,8 @@ function renderAddForm() {
   const frontField = fieldInput("正面 / 单词", aiSeed?.front || "");
   const backField = fieldInput("背面 / 释义", aiSeed?.back || "", true);
   const tagsField = fieldInput("标签（空格分隔）", aiSeed?.tags.join(" ") || "");
+  attachImagePicker(frontField.input, frontField.wrap);
+  attachImagePicker(backField.input, backField.wrap);
   panel.append(deckField.wrap, frontField.wrap, backField.wrap, tagsField.wrap);
 
   const actions = el("div", "form-actions");
@@ -2009,6 +2075,7 @@ function renderEditForm(note: NoteDto) {
   fields.slice(0, 4).forEach((v, i) => {
     const f = fieldInput(labels[i] || `字段 ${i + 1}`, v, i >= 1);
     inputs.push(f.input as HTMLInputElement);
+    attachImagePicker(f.input, f.wrap);
     panel.appendChild(f.wrap);
   });
   const tagsField = fieldInput("标签（空格分隔）", note.tags.join(" "));
